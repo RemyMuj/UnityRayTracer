@@ -464,7 +464,7 @@ public class RayTraceMaster : MonoBehaviour {
     /// Update(): Resets image sampling count for when camera changes view ///
     private void Update() {
         if (Input.GetKeyDown(KeyCode.F12)) {
-            ScreenCapture.CaptureScreenshot(Time.time + "-" + _currentSample + ".png");
+            ScreenCapture.CaptureScreenshot("Screenshots/" + Time.time + "-" + _currentSample + ".png");
         }
 
         if (transform.hasChanged) {
