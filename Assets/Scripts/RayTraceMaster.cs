@@ -28,7 +28,7 @@ public class RayTraceMaster : MonoBehaviour {
 
     private static List<Sphere> _spheres = new List<Sphere>();
 
-    private static List<rotBounds> debugBoundsList = new List<rotBounds>();
+    private static List<Bounds> debugBoundsList = new List<Bounds>();
     
     private ComputeBuffer _meshObjectBuffer;
     private ComputeBuffer _vertexBuffer;
@@ -61,12 +61,6 @@ public class RayTraceMaster : MonoBehaviour {
     };
 
     /// Bounding Volume Structs ///
-    public struct rotBounds {
-        public UnityEngine.Matrix4x4 localToWorldMatrix;
-        public UnityEngine.Vector3 min;
-        public UnityEngine.Vector3 max;
-    };
-
     unsafe public struct SphereList {
         public Sphere unit;
         public SphereList* link;
@@ -77,20 +71,20 @@ public class RayTraceMaster : MonoBehaviour {
         public MeshList* link;
     };
 
-    unsafe public struct SphereBVH {
-        public rotBounds bounds;
-        public SphereList group;
+    unsafe public struct SphereNode {
+        public Bounds bounds;
+        public SphereList spheres;
 
-        public SphereBVH* link1;
-        public SphereBVH* link2;
+        public SphereNode* link1;
+        public SphereNode* link2;
     };
 
-    unsafe public struct MeshBVH {
-        public rotBounds bounds;
-        public MeshList group;
+    unsafe public struct MeshNode {
+        public Bounds bounds;
+        public MeshList meshes;
 
-        public MeshBVH* link1;
-        public MeshBVH* link2;
+        public MeshNode* link1;
+        public MeshNode* link2;
     };
 
     /// OnEnable(): loads in the scene ///
@@ -241,8 +235,8 @@ public class RayTraceMaster : MonoBehaviour {
         return return_array;
     }
 
-    /// ComputeSlicePlane(): Compute Normal Vector for best slicing plane to minimize overlap and maximize 50/50 splitting ///
-    private UnityEngine.Matrix4x4 ComputeSlicePlane(List<UnityEngine.Vector3> centerPoints) {
+    /// ComputeCenter(): Compute center for bounding boxes to maximize 50/50 splitting ///
+    private UnityEngine.Vector3 ComputeCenter(List<UnityEngine.Vector3> centerPoints) {
         // Setup Matrices
         int numPoints = centerPoints.Count;
         float[,] A = new float[numPoints, 3];
@@ -268,137 +262,84 @@ public class RayTraceMaster : MonoBehaviour {
             avePoint += centerPoints[i];
         }
 
-        avePoint /= numPoints;
- 
-        // Project points to best fit plane
-        float dist = UnityEngine.Vector3.Dot(xVector, avePoint);
-
-        for (int i = 0; i < numPoints; i++) {
-            centerPoints[i] -= dist * xVector;
-        }
-
-        // Setup Matrices for finding line of best fit
-        float[,] C = new float[numPoints, 3];
-        float[,] F = new float[3, 3];
-        double[,] E = new double[3, 3];
-
-        for (int i = 0; i < numPoints; i++) {
-            A[i, 0] = centerPoints[i].x;
-            A[i, 1] = centerPoints[i].y;
-            A[i, 2] = centerPoints[i].z;
-
-            C[i, 0] = centerPoints[i].x - avePoint.x;
-            C[i, 1] = centerPoints[i].y - avePoint.y;
-            C[i, 2] = centerPoints[i].z - avePoint.z;
-        }
-
-        F = Matrix.Multiply(Matrix.Transpose(A), C);
-
-        // Finding Eigenvalues and best eigenvector
-        for (int i = 0; i < 3; i++) {
-            for (int j = 0; j < 3; j++) {
-                E[i, j] = (double)(F[i, j]);
-            }
-        }
-
-        Accord.Math.Decompositions.EigenvalueDecomposition eDecomp = new Accord.Math.Decompositions.EigenvalueDecomposition(E, false, true);
-
-        int index = 0;
-        double[] eSolution = new double[3];
-        eSolution = eDecomp.RealEigenvalues;
-        E = eDecomp.Eigenvectors;
-
-        for (int i = 1; i < 3; i++) {
-            if (eSolution[index] < eSolution[i]) {
-                index = i;
-            }
-        }
-
-        eSolution[0] = E[0, index];
-        eSolution[1] = E[1, index];
-        eSolution[2] = E[2, index];
-
-        // Solve for vector for line of best fit
-        UnityEngine.Vector3 yVector = new UnityEngine.Vector3((float) eSolution[0], (float) eSolution[1], (float) eSolution[2]);
-        yVector.Normalize();
-
-        // Find third vector for transform matrix
-        UnityEngine.Vector3 zVector = UnityEngine.Vector3.Cross(xVector, yVector);
-        zVector.Normalize();
-
-        // Setup and return slicingPlane Matrix
-        UnityEngine.Matrix4x4 matrix = new UnityEngine.Matrix4x4();
-
-        UnityEngine.Vector4 rightVector = new UnityEngine.Vector4(xVector.x, xVector.y, xVector.z, 0.0f);
-        UnityEngine.Vector4 upVector = new UnityEngine.Vector4(yVector.x, yVector.y, yVector.z, 0.0f);
-        UnityEngine.Vector4 forwardVector = new UnityEngine.Vector4(zVector.x, zVector.y, zVector.z, 0.0f);
-        UnityEngine.Vector4 positionVector = new UnityEngine.Vector4(avePoint.x, avePoint.y, avePoint.z, 1.0f);
-        
-        matrix.SetColumn(0, rightVector);
-        matrix.SetColumn(1, upVector);
-        matrix.SetColumn(2, forwardVector);
-        matrix.SetColumn(3, positionVector);
-
-        return matrix;
+        return avePoint / numPoints;
     }
 
-    /// CreateChildBound() ///
-    private rotBounds CreateChildBound(UnityEngine.Matrix4x4 sliceMatrix, float checkDis, LayerMask mask) {
+    /// FindChildBounds() ///
+    private Bounds[] FindChildBounds(UnityEngine.Vector3 start, UnityEngine.Vector3 extents, int objType, int count) {
         // Setup Lists & Bounds
-        List<Sphere> objects = new List<Sphere>();
-        Bounds _bound = new Bounds();
+        LayerMask mask;
 
-        // Boxcast using slicing plane matrix
-        Quaternion rot = sliceMatrix.rotation;
-        UnityEngine.Vector3 halfExtents = new UnityEngine.Vector3(checkDis * 20.0f, checkDis * 20.0f, 0.0f);
-        UnityEngine.Vector3 slicePlaneNormal = new UnityEngine.Vector3(sliceMatrix[1, 0], sliceMatrix[1, 1], sliceMatrix[1, 2]);
+        switch(objType) {
+            // Handling Spheres
+            case 1: mask = LayerMask.GetMask("RayTrace_sphere"); break;
 
-        RaycastHit[] hits = Physics.BoxCastAll(sliceMatrix.GetPosition(), halfExtents, slicePlaneNormal, rot, checkDis, mask, QueryTriggerInteraction.Ignore);
-        sliceMatrix.SetColumn(3, new UnityEngine.Vector3(0.0f, 0.0f, 0.0f));
+            // Handling Meshes (WIP)
+            default: mask = LayerMask.GetMask("RayTrace_mesh"); break;
+        }
 
-        // Index objects found in Boxcast
-        foreach (RaycastHit hit in hits) {
-            // Find object and corresponding sphere
-            RayTraceObject obj = hit.collider.gameObject.GetComponent<RayTraceObject>();
+        float[] counts = {count / 2.0f, count / 2.0f, count / 2.0f};
+        int hitIndex = 0;
+
+        // Test Collision boxes along each axis
+        Collider[][] FrontHits = new Collider[3][];
+        Collider[][] BackHits = new Collider[3][];
+
+        FrontHits[0] = Physics.OverlapBox(start + new UnityEngine.Vector3(extents.x / 2.0f, 0, 0), new UnityEngine.Vector3(extents.x / 2.0f, extents.y, extents.z), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // x-axis test
+        FrontHits[1] = Physics.OverlapBox(start + new UnityEngine.Vector3(0, extents.y / 2.0f, 0), new UnityEngine.Vector3(extents.x, extents.y / 2.0f, extents.z), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // y-axis test
+        FrontHits[2] = Physics.OverlapBox(start + new UnityEngine.Vector3(0, 0, extents.z / 2.0f), new UnityEngine.Vector3(extents.x, extents.y, extents.z / 2.0f), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // z-axis test
+
+        BackHits[0] = Physics.OverlapBox(start - new UnityEngine.Vector3(extents.x / 2.0f, 0, 0), new UnityEngine.Vector3(extents.x / 2.0f, extents.y, extents.z), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // x-axis test
+        BackHits[1] = Physics.OverlapBox(start - new UnityEngine.Vector3(0, extents.y / 2.0f, 0), new UnityEngine.Vector3(extents.x, extents.y / 2.0f, extents.z), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // y-axis test
+        BackHits[2] = Physics.OverlapBox(start - new UnityEngine.Vector3(0, 0, extents.z / 2.0f), new UnityEngine.Vector3(extents.x, extents.y, extents.z / 2.0f), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // z-axis test
+
+        // Compare slicing axes
+        for (int i = 0; i < 3; i++) {
+            counts[i] = Mathf.Abs(counts[i] - FrontHits[i].Length);
+
+            if (counts[i] == Mathf.Min(counts[i])) 
+                hitIndex = i;
+        }
+
+        // Create largest extents for child bounds based on winning axis
+        Bounds[] boxes = new Bounds[2];
+        Bounds bound1 = new Bounds();
+        Bounds bound2 = new Bounds();
+
+        foreach (Collider hit in FrontHits[hitIndex]) {
+            // Find object and object index
+            RayTraceObject obj = hit.gameObject.GetComponent<RayTraceObject>();
             int index = _rayTraceObjects.FindIndex(x => x == obj); 
 
-            // Find index to edit Sphere
+            // Encapsulate Object
             if (index != -1) {
-                index = _rayTraceObjectIndices[index];
-            }
-
-            // Add object as child of volume
-            if (index != -1) {
-                // Add contribution to bounding volume
-                _bound.Encapsulate(obj.bounds);
-
-                // Add Object to list
-                objects.Add(_spheres[index]);
+                bound1.Encapsulate(obj.bounds);
             }
         }
 
-        // Find Rotated bound extents
+        foreach (Collider hit in BackHits[hitIndex]) {
+            // Find object and object index
+            RayTraceObject obj = hit.gameObject.GetComponent<RayTraceObject>();
+            int index = _rayTraceObjects.FindIndex(x => x == obj); 
 
-        // Create Rotated Bound from regular bound
-        rotBounds bound = new rotBounds();
-        bound.min = sliceMatrix * _bound.min;
-        bound.max = sliceMatrix * _bound.max;
+            // Encapsulate Object
+            if (index != -1) {
+                bound2.Encapsulate(obj.bounds);
+            }
+        }
 
-        UnityEngine.Vector3 boxCenter = bound.min + (bound.max / 2);
-        UnityEngine.Vector4 posColumn = new UnityEngine.Vector4(boxCenter.x, boxCenter.y, boxCenter.z, 1.0f);
-
-        sliceMatrix.SetColumn(3, posColumn);
-        bound.localToWorldMatrix = sliceMatrix;
-
-        // DEBUG: Draw bounding box
-        debugBoundsList.Add(bound);
+        // DEBUG Drawing
+        debugBoundsList.Add(bound1);
+        debugBoundsList.Add(bound2);
 
         // Return child bound
-        return bound;
+        boxes[0] = bound1;
+        boxes[1] = bound2;
+        return boxes;
     }
 
-    /// SplitSphereBVH(): Recursively split scene into bounding volume hierachy to efficiently search for spheres ///
-    private int SplitSphereBVH(rotBounds parent, List<Sphere> spheres) {
+    /// SplitBounds(): Recursively split scene into bounding volume hierachy to efficiently search for spheres ///
+    private int SplitSphereBounds(SphereNode parent, List<Sphere> spheres) {
         // Setup Variables
         int numObjects = spheres.Count;
 
@@ -409,18 +350,17 @@ public class RayTraceMaster : MonoBehaviour {
                 centerPoints.Add(sphere.position);
             }
 
-            // Get Slicing Plane
-            UnityEngine.Matrix4x4 slicePlaneMatrix = ComputeSlicePlane(centerPoints);
+            // Setup variables
+            UnityEngine.Vector3 start = ComputeCenter(centerPoints);
+            float extents = (parent.bounds.max - parent.bounds.min).magnitude;
 
-            // Setup Boxcasting variables
-            float checkDis = (parent.max - parent.min).magnitude;
-
-            // Generate First Child Bounding Box
-            rotBounds child1 = CreateChildBound(slicePlaneMatrix, checkDis, LayerMask.GetMask("RayTrace_sphere"));
+            // Generate Child Bounding Boxes
+            Bounds[] childBounds = new Bounds[2];
+            childBounds = FindChildBounds(start, parent.bounds.extents, 1, numObjects);
 
             // Generate Second Child Bounding Box
-            slicePlaneMatrix.SetColumn(1, -1 * slicePlaneMatrix.GetColumn(1));
-            rotBounds child2 = CreateChildBound(slicePlaneMatrix, checkDis, LayerMask.GetMask("RayTrace_sphere"));
+            //slicePlaneMatrix.SetColumn(1, -1 * slicePlaneMatrix.GetColumn(1));
+            //rotBounds child2 = CreateChildBound(slicePlaneMatrix, extents, LayerMask.GetMask("RayTrace_sphere"));
         }
 
         // Decide on further iteration or not
@@ -438,15 +378,18 @@ public class RayTraceMaster : MonoBehaviour {
         meshRoot.min = rootBounds[0].min;
         meshRoot.max = rootBounds[0].max;
         meshRoot.localToWorldMatrix = UnityEngine.Matrix4x4.identity;
-        int treeSize = SplitSphereBVH(meshRoot, _meshObjects);
+        int treeSize = SplitSphereMesh(meshRoot, _meshObjects);
         //*/
 
         // Sphere Tree Rebuilding
-        rotBounds sphereRoot = new rotBounds();
-        sphereRoot.min = rootBounds[1].min;
-        sphereRoot.max = rootBounds[1].max;
-        sphereRoot.localToWorldMatrix = UnityEngine.Matrix4x4.identity;
-        int treeSize = SplitSphereBVH(sphereRoot, _spheres);
+        SphereNode sphereRoot = new SphereNode();
+        //sphereRoot.spheres = _spheres;
+        sphereRoot.bounds.min = rootBounds[1].min;
+        sphereRoot.bounds.max = rootBounds[1].max;
+        int treeSize = SplitSphereBounds(sphereRoot, _spheres);
+
+        // DEBUG Drawing
+        debugBoundsList.Add(sphereRoot.bounds);
 
         // Update Computer buffers
         CreateComputeBuffer(ref _meshObjectBuffer, _meshObjects, MeshObjectStructSize);
@@ -566,13 +509,10 @@ public class RayTraceMaster : MonoBehaviour {
         float maxi = debugBoundsList.Count;
 
         // Draw each bound
-        foreach (rotBounds bound in debugBoundsList) {
+        foreach (Bounds bound in debugBoundsList) {
             // Change color
-            Gizmos.color = new Color(i / maxi, i / maxi, i / maxi);
+            Gizmos.color = new Color(i / maxi, 0.5f, 0.5f, 1.0f / maxi);
             i++;
-
-            // Get Transformation Matrix
-            UnityEngine.Matrix4x4 mat = bound.localToWorldMatrix;
 
             // Setup Corners
             UnityEngine.Vector3 corner1 = new UnityEngine.Vector3(bound.max.x, bound.min.y, bound.min.z);
@@ -584,22 +524,22 @@ public class RayTraceMaster : MonoBehaviour {
             UnityEngine.Vector3 corner6 = new UnityEngine.Vector3(bound.max.x, bound.max.y, bound.min.z);
 
             // Drawing lines
-            Gizmos.DrawLine(mat * bound.min, mat * corner1);
-            Gizmos.DrawLine(mat * bound.min, mat * corner2);
-            Gizmos.DrawLine(mat * bound.min, mat * corner3);
+            Gizmos.DrawLine(bound.min, corner1);
+            Gizmos.DrawLine(bound.min, corner2);
+            Gizmos.DrawLine(bound.min, corner3);
 
-            Gizmos.DrawLine(mat * bound.max, mat * corner4);
-            Gizmos.DrawLine(mat * bound.max, mat * corner5);
-            Gizmos.DrawLine(mat * bound.max, mat * corner6);
+            Gizmos.DrawLine(bound.max, corner4);
+            Gizmos.DrawLine(bound.max, corner5);
+            Gizmos.DrawLine(bound.max, corner6);
 
-            Gizmos.DrawLine(mat * corner1, mat * corner5);
-            Gizmos.DrawLine(mat * corner1, mat * corner6);
+            Gizmos.DrawLine(corner1, corner5);
+            Gizmos.DrawLine(corner1, corner6);
 
-            Gizmos.DrawLine(mat * corner2, mat * corner4);
-            Gizmos.DrawLine(mat * corner2, mat * corner6);
+            Gizmos.DrawLine(corner2, corner4);
+            Gizmos.DrawLine(corner2, corner6);
 
-            Gizmos.DrawLine(mat * corner3, mat * corner4);
-            Gizmos.DrawLine(mat * corner3, mat * corner5);
+            Gizmos.DrawLine(corner3, corner4);
+            Gizmos.DrawLine(corner3, corner5);
         }
     }
 }
