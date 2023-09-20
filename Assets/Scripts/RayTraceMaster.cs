@@ -1,8 +1,6 @@
 using System.Collections.Generic;
-using Accord.Math;
 using System.Linq;
 using UnityEngine;
-using Unity.Collections.LowLevel.Unsafe;
 
 //[ExecuteAlways, ImageEffectAllowedInSceneView]
 public class RayTraceMaster : MonoBehaviour {
@@ -40,6 +38,8 @@ public class RayTraceMaster : MonoBehaviour {
     private static int RayTraceParamsStructSize = 40;
     private static int MeshObjectStructSize = 72 + RayTraceParamsStructSize;
     private static int SphereStructSize = 16 + RayTraceParamsStructSize;
+    private static int BVHBaseSize = 0; // Figure this out later
+    private static int SphereDepth = 0; // Calculated when figuring out
 
     /// General Structs ///
     public struct RayTraceParams {
@@ -62,32 +62,14 @@ public class RayTraceMaster : MonoBehaviour {
         public RayTraceParams lighting;
     };
 
-    /// Bounding Volume Structs ///
-    unsafe public struct SphereList {
-        public Sphere unit;
-        public SphereList* link;
-    };
-
-    unsafe public struct MeshList {
-        public MeshObject unit;
-        public MeshList* link;
-    };
-
-    unsafe public struct SphereNode {
+    public struct BVHNode {
         public Bounds bounds;
-        public SphereList spheres;
-
-        public SphereNode* link1;
-        public SphereNode* link2;
+        public int index;
     };
 
-    unsafe public struct MeshNode {
-        public Bounds bounds;
-        public MeshList meshes;
-
-        public MeshNode* link1;
-        public MeshNode* link2;
-    };
+    // Bounding Volume Trees
+    List<BVHNode> SphereBVH = new List<BVHNode>();
+    List<BVHNode> MeshBVH = new List<BVHNode>(); // UNUSED FOR NOW
 
     /// OnEnable(): loads in the scene ///
     private void OnEnable() {
@@ -260,29 +242,13 @@ public class RayTraceMaster : MonoBehaviour {
         return return_array;
     }
 
-    /// ComputeCenter(): Compute center for bounding boxes to maximize 50/50 splitting ///
+    /// ComputeCenter(): Compute center of objects in bounding box to maximize 50/50 splitting ///
     private UnityEngine.Vector3 ComputeCenter(List<UnityEngine.Vector3> centerPoints) {
-        // Setup Matrices
-        int numPoints = centerPoints.Count;
-        float[,] A = new float[numPoints, 3];
-        float[,] B = new float[numPoints, 1];
-
-        for (int i = 0; i < numPoints; i++) {
-            A[i, 0] = centerPoints[i].x;
-            A[i, 1] = centerPoints[i].y;
-            A[i, 2] = 1;
-
-            B[i, 0] = centerPoints[i].z;
-        }
-
-        // Solve for normal vector of plane of best fit
-        float[,] solution = Matrix.Solve(A, B, true);
-        UnityEngine.Vector3 xVector = new UnityEngine.Vector3(solution[0, 0], solution[1, 0], solution[2, 0]);
-        xVector.Normalize();
-
-        // Compute average point
+        // Variables
         UnityEngine.Vector3 avePoint = new UnityEngine.Vector3(0.0f, 0.0f, 0.0f);
+        float numPoints = (float) centerPoints.Count;
 
+        // summing coordinates
         for (int i = 0; i < numPoints; i++) {
             avePoint += centerPoints[i];
         }
@@ -290,14 +256,11 @@ public class RayTraceMaster : MonoBehaviour {
         return avePoint / numPoints;
     }
 
-    /// CreateChildNodes_Spheres() ///
-    unsafe private SphereNode[] CreateChildNodes_Spheres(UnityEngine.Vector3 start, UnityEngine.Vector3 extents, int count) {
+    /// SplitBounds() ///
+    private Bounds[] SplitBounds(UnityEngine.Vector3 start, UnityEngine.Vector3 extents, LayerMask mask, int count) {
         // Setup Variables
-        LayerMask mask = LayerMask.GetMask("RayTrace_sphere");
         float[] counts = {count / 2.0f, count / 2.0f, count / 2.0f};
         int hitIndex = 0;
-        List<Sphere> list1 = new List<Sphere>();
-        List<Sphere> list2 = new List<Sphere>();
 
         // Test Collision boxes along each axis
         Collider[][] FrontHits = new Collider[3][];
@@ -327,7 +290,7 @@ public class RayTraceMaster : MonoBehaviour {
                     overlapCount++;
             }
             
-            Debug.Log("[SPHERES] Total: " + count + ", Slice Axis: " + hitIndex + ", Front hits: " + FrontHits[hitIndex].Length + ", Backhits: " + BackHits[hitIndex].Length + ", Overlaps: " + overlapCount);
+            Debug.Log(" > Total: " + count + ", Slice Axis: " + hitIndex + ", Front hits: " + FrontHits[hitIndex].Length + ", Backhits: " + BackHits[hitIndex].Length + ", Overlaps: " + overlapCount);
         }
 
         // Create largest extents for child bounds based on winning axis
@@ -339,13 +302,9 @@ public class RayTraceMaster : MonoBehaviour {
             RayTraceObject obj = hit.gameObject.GetComponent<RayTraceObject>();
             int index = _rayTraceObjects.FindIndex(x => x == obj); 
 
+            // Encapsulate Object
             if (index != -1) {
-                // Encapsulate Object
                 bound1.Encapsulate(obj.bounds);
-
-                // Add Sphere to list
-                index = _rayTraceObjectIndices[index];
-                list1.Add(_spheres[index]);
             }
         }
 
@@ -354,13 +313,9 @@ public class RayTraceMaster : MonoBehaviour {
             RayTraceObject obj = hit.gameObject.GetComponent<RayTraceObject>();
             int index = _rayTraceObjects.FindIndex(x => x == obj); 
 
+            // Encapsulate Object
             if (index != -1) {
-                // Encapsulate Object
                 bound2.Encapsulate(obj.bounds);
-
-                // Add Sphere to list
-                index = _rayTraceObjectIndices[index];
-                list2.Add(_spheres[index]);
             }
         }
 
@@ -369,94 +324,31 @@ public class RayTraceMaster : MonoBehaviour {
         debugBoundsList.Add(bound2);
 
         // Return Child Nodes
-        SphereNode[] nodes = new SphereNode[2];
-        nodes[0].bounds = bound1;
-        nodes[0].spheres = LinkedList_Spheres(list1);
-        nodes[0].link1 = null;
-        nodes[0].link2 = null;
+        Bounds[] final = new Bounds[2];
+        final[0] = bound1;
+        final[1] = bound2;
 
-        nodes[1].bounds = bound2;
-        nodes[1].spheres = LinkedList_Spheres(list2);
-        nodes[1].link1 = null;
-        nodes[1].link2 = null;
-
-        return nodes;
+        return final;
     }
 
-    /// LinkedList_Spheres(): Convert List<Sphere> to linked list of type SphereList*
-    private SphereList LinkedList_Spheres(List<Sphere> objects) {
-        // Starting list variables
-        SphereList list = new SphereList();
-
-        // Building linked list
-        unsafe {
-            // setup pointers
-            SphereList* list_prev = &list;
-            SphereList* list_next;
-            SphereList newUnit;
-
-            list_prev -> link = null;
-
-            // Add first Sphere
-            if (objects.Count >= 1) {
-                list_prev -> unit = objects[0];
-            }
-
-            // Add all other Spheres
-            for (int i = 1; i < objects.Count; i++) {
-                newUnit = new SphereList();
-                list_next = &newUnit;
-
-                list_next -> unit = objects[i];
-                list_next -> link = null;
-
-                list_prev -> link = list_next;
-                list_prev = list_next;
-            }
-        }
-
-        return list;
-    }
-
-    /// LinkedListInverse_Spheres(): Convert linked list of type SphereList* to List<Sphere> 
-    unsafe private List<Sphere> LinkedListInverse_Spheres(SphereList* node) {
-        // Starting list variables
+    /// GetSpheresInBound() ///
+    private List<Sphere> GetSpheresInBound(Bounds bounds) {
         List<Sphere> list = new List<Sphere>();
 
-        // Building List
-        unsafe {
-            while (node != null) {
-                list.Add(node -> unit);
-                node = node -> link;
+        foreach (RayTraceObject obj in _rayTraceObjects) {
+            if (obj.type == 1 && bounds.Intersects(obj.bounds)) {
+                list.Add(_spheres[_rayTraceObjectIndices[_rayTraceObjects.FindIndex(x => x == obj)]]);
             }
         }
 
         return list;
     }
 
-    /// CreateSphereLinkedList(): Create linked list of spheres that fall in given AABB
-    unsafe private int CountLinks_Spheres(SphereList* node) {
-        // Starting list variables
-        if (node != null) {
-            return 1 + CountLinks_Spheres(node -> link);
-        }
-
-        // End Return
-        return 0;
-    }
-
-    /// SplitSphereBounds(): Recursively split scene into bounding volume hierachy to efficiently search for spheres ///
-    unsafe private SphereNode*[] SplitBounds_Spheres(SphereNode parent, List<Sphere> spheres) {
+    /// CreateBVH_Spheres(): Recursively split scene into bounding volume hierachy to efficiently search for spheres ///
+    private void CreateBVH_Spheres(Bounds parent, List<Sphere> spheres, int depth, int index, out List<BVHNode> SphereBVH) {
         // Setup Variables
         int numObjects = spheres.Count;
-
-        SphereNode[] nodes = new SphereNode[2];
-        nodes[0] = new SphereNode();
-        nodes[1] = new SphereNode();
-
-        SphereNode*[] ptrs = new SphereNode*[2];
-        ptrs[0] = null;
-        ptrs[1] = null;
+        Bounds[] newBounds = new Bounds[2];
 
         // Debug Report
         if (DEBUG) {
@@ -464,7 +356,7 @@ public class RayTraceMaster : MonoBehaviour {
         }
 
         // Search Parent Bound
-        if (numObjects > 1) {
+        if (numObjects > 1 && depth <= SphereDepth) {
             // Create list of center points
             List<UnityEngine.Vector3> centerPoints = new List<UnityEngine.Vector3>();
 
@@ -472,37 +364,38 @@ public class RayTraceMaster : MonoBehaviour {
                 centerPoints.Add(sphere.position);
             }
 
-            // Generate Child Nodes
-            nodes = CreateChildNodes_Spheres(ComputeCenter(centerPoints), parent.bounds.extents, numObjects);
-            int length1, length2;
-            fixed (SphereList* list = &(nodes[0].spheres)) {length1 = CountLinks_Spheres(list);}
-            fixed (SphereList* list = &(nodes[1].spheres)) {length2 = CountLinks_Spheres(list);}
+            // Generate Child Bounding Boxes
+            newBounds = SplitBounds(ComputeCenter(centerPoints), parent.extents, LayerMask.GetMask("RayTrace_sphere"), numObjects);
+            List<Sphere> list1 = GetSpheresInBound(newBounds[0]);
+            List<Sphere> list2 = GetSpheresInBound(newBounds[1]);
 
+            // Debug Report
             if (DEBUG) {
-                Debug.Log("Child1 List Length = " + length1 + ", Child2 List Length = " + length2);
+                Debug.Log(" > Child1 List Length = " + list1.Count + ", Child2 List Length = " + list2.Count);
             }
 
-            // Stop recursion if splitting was unuseful
-            if (numObjects == length1 || numObjects == length2 || length1 == 0 || length2 == 0) {
-                return ptrs;
+            // Left Child Recursion
+            if (list1.Count > 1 && depth < SphereDepth) {
+                CreateBVH_Spheres(newBounds[0], list1, depth + 1, index - (SphereDepth - depth), out SphereBVH);
+            } else if (list1.Count > 1) {
+                // DEBUG Message for now, will figure out how to handle better later !!!!!
+                Debug.Log("<WARNING> Overlapping bounds left some spheres out of BVH Tree");
             }
-            
-            // Recursion with links
-            SphereNode*[] links = new SphereNode*[2];
 
-            fixed (SphereList* list = &(nodes[0].spheres)) {links = SplitBounds_Spheres(nodes[0], LinkedListInverse_Spheres(list));}
-            nodes[0].link1 = links[0];
-            nodes[0].link2 = links[1];
-
-            fixed (SphereList* list = &(nodes[1].spheres)) {links = SplitBounds_Spheres(nodes[1], LinkedListInverse_Spheres(list));}
-            nodes[1].link1 = links[0];
-            nodes[1].link2 = links[1];
+            // Right Child Recursion
+            if (list2.Count > 1 && depth < SphereDepth) {
+                CreateBVH_Spheres(newBounds[1], list2, depth + 1, index + (SphereDepth - depth), out SphereBVH);
+            } else if (list2.Count > 1) {
+                // DEBUG Message for now, will figure out how to handle better later !!!!!
+                Debug.Log("<WARNING> Overlapping bounds left some spheres out of BVH Tree");
+            }
         }
 
-        // Default Return
-        fixed (SphereNode* ptr1 = &(nodes[0])) {ptrs[0] = ptr1;}
-        fixed (SphereNode* ptr2 = &(nodes[1])) {ptrs[1] = ptr2;}
-        return ptrs;
+        // Final Value Setting
+        SphereBVH[index].bounds = parent;
+        if (numObjects > 0) {
+            SphereBVH[index].index = _spheres.FindIndex(x => x == spheres[0]);
+        }
     }
 
     /// RebuildTrees(): Rebuild Bounding Volume Tree for Ray Trace Objects ///
@@ -516,19 +409,26 @@ public class RayTraceMaster : MonoBehaviour {
         int treeSize = SplitSphereMesh(meshRoot, _meshObjects);
         //*/
 
-        // Sphere Tree Rebuilding
-        SphereNode sphereRoot = new SphereNode();
-        sphereRoot.spheres = LinkedList_Spheres(_spheres);
-        sphereRoot.bounds.min = rootBounds[1].min;
-        sphereRoot.bounds.max = rootBounds[1].max;
-        unsafe {
-            SphereNode*[] links = SplitBounds_Spheres(sphereRoot, _spheres);
-            sphereRoot.link1 = links[0];
-            sphereRoot.link2 = links[1];
+        // Sphere BVH Tree Rebuilding
+        SphereDepth = Mathf.CeilToInt(Mathf.Log(_spheres.Count)) + 1;
+        int SphereLength = (int) Mathf.Round(Mathf.Pow(2.0f, (float) SphereDepth)) - 1;
+
+        for (int i = 0; i < SphereLength; i++) {
+            BVHNode newNode = new BVHNode();
+            newNode.index = -1;
+
+            SphereBVH.Add(newNode);
+        }
+
+        CreateBVH_Spheres(rootBounds[1], _spheres, 1, (int) ((SphereLength - 1) / 2.0f), out SphereBVH);
+
+        // Debug Reporting
+        if (DEBUG) {
+            Debug.Log("[SPHERES] Depth: " + SphereDepth + ", Length:" + SphereLength);
         }
 
         // DEBUG Drawing
-        debugBoundsList.Add(sphereRoot.bounds);
+        debugBoundsList.Add(rootBounds[1]);
 
         // Update Computer buffers
         CreateComputeBuffer(ref _meshObjectBuffer, _meshObjects, MeshObjectStructSize);
