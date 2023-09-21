@@ -27,8 +27,6 @@ public class RayTraceMaster : MonoBehaviour {
     private static List<int> _indices = new List<int>();
 
     private static List<Sphere> _spheres = new List<Sphere>();
-
-    private static List<Bounds> debugBoundsList = new List<Bounds>();
     
     private ComputeBuffer _meshObjectBuffer;
     private ComputeBuffer _vertexBuffer;
@@ -38,21 +36,73 @@ public class RayTraceMaster : MonoBehaviour {
     private static int RayTraceParamsStructSize = 40;
     private static int MeshObjectStructSize = 72 + RayTraceParamsStructSize;
     private static int SphereStructSize = 16 + RayTraceParamsStructSize;
-    private static int BVHBaseSize = 0; // Figure this out later
-    private static int SphereDepth = 0; // Calculated when figuring out
-
+    private static int BVHBaseSize = 0; // ====================================================== [WIP] depends on how data is structured to send to GPU
+    
     /// General Structs ///
     public struct RayTraceParams {
         public UnityEngine.Vector3 color_albedo;
         public UnityEngine.Vector3 color_specular;
         public UnityEngine.Vector3 emission;
         public float smoothness;
-    }
+
+        public bool Equals(RayTraceParams other) {
+            return (other.color_albedo == color_albedo && other.color_specular == color_specular && other.emission == emission && other.smoothness == smoothness);
+        }
+
+        public override bool Equals(object obj) {
+            return (obj != null && GetType() == obj.GetType() && this.Equals((RayTraceParams) obj));
+        }
+
+        public override int GetHashCode() {
+            unchecked {
+                int hash = 17;
+                hash = (hash * 23) + color_albedo.GetHashCode();
+                hash = (hash * 23) + color_specular.GetHashCode();
+                hash = (hash * 23) + emission.GetHashCode();
+                hash = (hash * 23) + smoothness.GetHashCode();
+                return hash;
+            }
+        }
+
+        public static bool operator ==(RayTraceParams r1, RayTraceParams r2) {
+            return r1.Equals(r2);
+        }
+
+        public static bool operator !=(RayTraceParams r1, RayTraceParams r2) {
+            return !r1.Equals(r2);
+        }
+    };
 
     public struct Sphere {
         public UnityEngine.Vector3 position;
         public float radius;
         public RayTraceParams lighting;
+
+        public bool Equals(Sphere other) {
+            return (other.position == position && other.radius == radius && other.lighting == lighting);
+        }
+
+        public override bool Equals(object obj) {
+            return (obj != null && GetType() == obj.GetType() && this.Equals((Sphere) obj));
+        }
+
+        public override int GetHashCode() {
+            unchecked {
+                int hash = 17;
+                hash = (hash * 23) + position.GetHashCode();
+                hash = (hash * 23) + radius.GetHashCode();
+                hash = (hash * 23) + lighting.GetHashCode();
+                return hash;
+            }
+        }
+
+        public static bool operator ==(Sphere s1, Sphere s2) {
+            return s1.Equals(s2);
+        }
+
+        public static bool operator !=(Sphere s1, Sphere s2) {
+            return !s1.Equals(s2);
+        }
     };
 
     public struct MeshObject {
@@ -60,16 +110,59 @@ public class RayTraceMaster : MonoBehaviour {
         public int indices_offset;
         public int indices_count;
         public RayTraceParams lighting;
+
+        public bool Equals(MeshObject other) {
+            return (other.localToWorldMatrix == localToWorldMatrix && other.indices_offset == indices_offset && other.indices_count == indices_count && other.lighting == lighting);
+        }
+
+        public override bool Equals(object obj) {
+            return (obj != null && GetType() == obj.GetType() && this.Equals((MeshObject) obj));
+        }
+
+        public override int GetHashCode() {
+            unchecked {
+                int hash = 17;
+                hash = (hash * 23) + localToWorldMatrix.GetHashCode();
+                hash = (hash * 23) + indices_offset.GetHashCode();
+                hash = (hash * 23) + indices_count.GetHashCode();
+                hash = (hash * 23) + lighting.GetHashCode();
+                return hash;
+            }
+        }
+
+        public static bool operator ==(MeshObject m1, MeshObject m2) {
+            return m1.Equals(m2);
+        }
+
+        public static bool operator !=(MeshObject m1, MeshObject m2) {
+            return !m1.Equals(m2);
+        }
     };
 
     public struct BVHNode {
-        public Bounds bounds;
+        public Bounds bounds; // ========================================= [WIP] Need to split up into better data for GPU to use
         public int index;
     };
 
     // Bounding Volume Trees
-    List<BVHNode> SphereBVH = new List<BVHNode>();
-    List<BVHNode> MeshBVH = new List<BVHNode>(); // UNUSED FOR NOW
+    private static List<BVHNode> MeshBVH = new List<BVHNode>();
+    private static int MeshDepth = 0;
+    
+    private static List<BVHNode> SphereBVH = new List<BVHNode>();
+    private static int SphereDepth = 0;
+
+    // Debug
+    public struct GizmoBox {
+        public Bounds bounds;
+        public Color color;
+
+        public GizmoBox(Bounds b, Color c) {
+            bounds = b;
+            color = c;
+        }
+    }
+
+    private static List<GizmoBox> GizmoList = new List<GizmoBox>();
 
     /// OnEnable(): loads in the scene ///
     private void OnEnable() {
@@ -242,17 +335,36 @@ public class RayTraceMaster : MonoBehaviour {
         return return_array;
     }
 
-    /// ComputeCenter(): Compute center of objects in bounding box to maximize 50/50 splitting ///
-    private UnityEngine.Vector3 ComputeCenter(List<UnityEngine.Vector3> centerPoints) {
+    /// ComputeCenter(MeshObjects): Compute center of all mesh objects in bounding box /// [WIP] ========================================================== ! ! ! ! !
+    private UnityEngine.Vector3 ComputeCenter(List<MeshObject> meshObjects) {
         // Variables
-        UnityEngine.Vector3 avePoint = new UnityEngine.Vector3(0.0f, 0.0f, 0.0f);
-        float numPoints = (float) centerPoints.Count;
+        UnityEngine.Vector3 avePoint = new UnityEngine.Vector3();
+        float numPoints = 0.0f;
 
-        // summing coordinates
-        for (int i = 0; i < numPoints; i++) {
-            avePoint += centerPoints[i];
+        // Adding Coordinates
+        foreach (MeshObject obj in meshObjects) {
+            for (int i = obj.indices_offset; i < obj.indices_count; i++) {
+                avePoint += _vertices[i];
+                numPoints++;
+            }
         }
 
+        // Return
+        return avePoint / numPoints;
+    }
+    
+    /// ComputeCenter(Spheres): Compute center of all spheres in bounding box ///
+    private UnityEngine.Vector3 ComputeCenter(List<Sphere> spheres) {
+        // Variables
+        UnityEngine.Vector3 avePoint = new UnityEngine.Vector3(0.0f, 0.0f, 0.0f);
+        float numPoints = (float) spheres.Count;
+
+        // Adding Coordinates
+        foreach (Sphere s in spheres) {
+            avePoint += s.position;
+        }
+
+        // Return
         return avePoint / numPoints;
     }
 
@@ -294,41 +406,63 @@ public class RayTraceMaster : MonoBehaviour {
         }
 
         // Create largest extents for child bounds based on winning axis
-        Bounds bound1 = FrontHits[hitIndex][0].bounds;
-        Bounds bound2 = BackHits[hitIndex][0].bounds;
+        Bounds[] final = new Bounds[2];
 
-        foreach (Collider hit in FrontHits[hitIndex]) {
-            // Find object and object index
-            RayTraceObject obj = hit.gameObject.GetComponent<RayTraceObject>();
-            int index = _rayTraceObjects.FindIndex(x => x == obj); 
+        if (FrontHits[hitIndex].Length > 0) {
+            // Setup first bounds
+            Bounds bound1 = FrontHits[hitIndex][0].bounds;
 
-            // Encapsulate Object
-            if (index != -1) {
-                bound1.Encapsulate(obj.bounds);
+            // Loop through remaining bounds
+            foreach (Collider hit in FrontHits[hitIndex]) {
+                // Find object and object index
+                RayTraceObject obj = hit.gameObject.GetComponent<RayTraceObject>();
+                int index = _rayTraceObjects.FindIndex(x => x == obj); 
+
+                // Encapsulate Object
+                if (index != -1) {
+                    bound1.Encapsulate(obj.bounds);
+                }
             }
+
+            // Setup for return
+            final[0] = bound1;
         }
 
-        foreach (Collider hit in BackHits[hitIndex]) {
-            // Find object and object index
-            RayTraceObject obj = hit.gameObject.GetComponent<RayTraceObject>();
-            int index = _rayTraceObjects.FindIndex(x => x == obj); 
+        if (BackHits[hitIndex].Length > 0) {
+            // Setup first bounds
+            Bounds bound2 = BackHits[hitIndex][0].bounds;
 
-            // Encapsulate Object
-            if (index != -1) {
-                bound2.Encapsulate(obj.bounds);
+            // Loop through remaining bounds
+            foreach (Collider hit in BackHits[hitIndex]) {
+                // Find object and object index
+                RayTraceObject obj = hit.gameObject.GetComponent<RayTraceObject>();
+                int index = _rayTraceObjects.FindIndex(x => x == obj); 
+
+                // Encapsulate Object
+                if (index != -1) {
+                    bound2.Encapsulate(obj.bounds);
+                }
             }
-        }
 
-        // DEBUG Drawing
-        debugBoundsList.Add(bound1);
-        debugBoundsList.Add(bound2);
+            // Setup for return
+            final[1] = bound2;
+        }
 
         // Return Child Nodes
-        Bounds[] final = new Bounds[2];
-        final[0] = bound1;
-        final[1] = bound2;
-
         return final;
+    }
+
+    /// GetMeshObjectsInBound() /// 
+    private List<MeshObject> GetMeshObjectsInBound(Bounds bounds) {
+        List<MeshObject> list = new List<MeshObject>();
+
+        foreach (RayTraceObject obj in _rayTraceObjects) {
+            if (obj.type == 0 && bounds.Intersects(obj.bounds)) {
+                list.Add(_meshObjects[_rayTraceObjectIndices[_rayTraceObjects.FindIndex(x => x == obj)]]);
+            }
+        }
+
+        return list;
     }
 
     /// GetSpheresInBound() ///
@@ -344,91 +478,162 @@ public class RayTraceMaster : MonoBehaviour {
         return list;
     }
 
-    /// CreateBVH_Spheres(): Recursively split scene into bounding volume hierachy to efficiently search for spheres ///
-    private void CreateBVH_Spheres(Bounds parent, List<Sphere> spheres, int depth, int index, out List<BVHNode> SphereBVH) {
+    /// CreateBVH_MeshObjects(): Recursively split scene into bounding volume hierachy for mesh objects ///
+    private void CreateBVH_MeshObjects(Bounds parent, List<MeshObject> meshes, int depth, int index) {
+        // Setup Variables
+        int numObjects = meshes.Count;
+
+        // Generate Child Bounds & Lists
+        // Bounds[] newBounds = SplitBounds(ComputeCenter(meshes), parent.extents, LayerMask.GetMask("RayTrace_mesh"), numObjects); // [WIP] ================= ! ! ! ! !
+        Bounds[] newBounds = SplitBounds(parent.center, parent.extents, LayerMask.GetMask("RayTrace_mesh"), numObjects);
+        List<MeshObject> list1 = GetMeshObjectsInBound(newBounds[0]);
+        List<MeshObject> list2 = GetMeshObjectsInBound(newBounds[1]);
+        BVHNode newNode;
+
+        // Debug Report
+        if (DEBUG) {
+            Debug.Log("[MESH OBJECTS] SplitBounds_MeshObjects() called on " + numObjects + " object(s)");
+            Debug.Log(" > Child1 List Length = " + list1.Count + ", Child2 List Length = " + list2.Count);
+        }
+
+        if (numObjects > 0) {
+            // Left Child Decisions
+            if (numObjects > 1 && depth <= MeshDepth) {
+                // Recursion
+                if (list1.Count > 0 && depth < MeshDepth) {
+                    CreateBVH_MeshObjects(newBounds[0], list1, depth + 1, index - (MeshDepth - depth));
+                } else if (list1.Count > 1) {
+                    // DEBUG Message for now, will figure out how to handle better later !!!!!
+                    Debug.Log("<WARNING> Overlapping bounds left some mesh objects out of BVH Tree");
+                }
+            }
+
+            // Catch up BVH with empty nodes
+            /*
+            while (MeshBVH.Count < index) {
+                newNode = new BVHNode();
+                newNode.index = -1;
+
+                MeshBVH.Add(newNode);
+                Debug.Log("!!!!! Empty Node Inserted");
+            } //*/
+
+            // Debug Drawing
+            GizmoList.Add(new GizmoBox(parent, new Color(1.0f, 0.0f, 0.0f, 0.5f)));
+            Debug.Log("Depth = " + depth);
+
+            // Node Addition
+            newNode = new BVHNode();
+            newNode.bounds = parent;
+            newNode.index = -1;
+
+            if (numObjects == 1 || (numObjects >= 1 && depth >= MeshDepth)) {
+                newNode.index = _meshObjects.FindIndex(x => (x == meshes[0]));
+            }
+
+            MeshBVH.Add(newNode);
+
+            // Right Child Decisions
+            if (numObjects > 1 && depth <= MeshDepth) {
+                // Recursion
+                if (list2.Count > 0 && depth < MeshDepth) {
+                    CreateBVH_MeshObjects(newBounds[1], list2, depth + 1, index + (MeshDepth - depth));
+                } else if (list2.Count > 1) {
+                    // DEBUG Message for now, will figure out how to handle better later !!!!!
+                    Debug.Log("<WARNING> Overlapping bounds left some mesh objects out of BVH Tree");
+                }
+            }
+        }
+    }
+
+        /// CreateBVH_Spheres(): Recursively split scene into bounding volume hierachy for spheres ///
+    private void CreateBVH_Spheres(Bounds parent, List<Sphere> spheres, int depth, int index) {
         // Setup Variables
         int numObjects = spheres.Count;
-        Bounds[] newBounds = new Bounds[2];
+
+        // Generate Child Bounds & Lists
+        Bounds[] newBounds = SplitBounds(ComputeCenter(spheres), parent.extents, LayerMask.GetMask("RayTrace_sphere"), numObjects);
+        List<Sphere> list1 = GetSpheresInBound(newBounds[0]);
+        List<Sphere> list2 = GetSpheresInBound(newBounds[1]);
+        BVHNode newNode;
 
         // Debug Report
         if (DEBUG) {
             Debug.Log("[SPHERES] SplitBounds_Spheres() called on " + numObjects + " object(s)");
+            Debug.Log(" > Child1 List Length = " + list1.Count + ", Child2 List Length = " + list2.Count);
         }
 
-        // Search Parent Bound
-        if (numObjects > 1 && depth <= SphereDepth) {
-            // Create list of center points
-            List<UnityEngine.Vector3> centerPoints = new List<UnityEngine.Vector3>();
-
-            foreach (Sphere sphere in spheres) {
-                centerPoints.Add(sphere.position);
-            }
-
-            // Generate Child Bounding Boxes
-            newBounds = SplitBounds(ComputeCenter(centerPoints), parent.extents, LayerMask.GetMask("RayTrace_sphere"), numObjects);
-            List<Sphere> list1 = GetSpheresInBound(newBounds[0]);
-            List<Sphere> list2 = GetSpheresInBound(newBounds[1]);
-
-            // Debug Report
-            if (DEBUG) {
-                Debug.Log(" > Child1 List Length = " + list1.Count + ", Child2 List Length = " + list2.Count);
-            }
-
-            // Left Child Recursion
-            if (list1.Count > 1 && depth < SphereDepth) {
-                CreateBVH_Spheres(newBounds[0], list1, depth + 1, index - (SphereDepth - depth), out SphereBVH);
-            } else if (list1.Count > 1) {
-                // DEBUG Message for now, will figure out how to handle better later !!!!!
-                Debug.Log("<WARNING> Overlapping bounds left some spheres out of BVH Tree");
-            }
-
-            // Right Child Recursion
-            if (list2.Count > 1 && depth < SphereDepth) {
-                CreateBVH_Spheres(newBounds[1], list2, depth + 1, index + (SphereDepth - depth), out SphereBVH);
-            } else if (list2.Count > 1) {
-                // DEBUG Message for now, will figure out how to handle better later !!!!!
-                Debug.Log("<WARNING> Overlapping bounds left some spheres out of BVH Tree");
-            }
-        }
-
-        // Final Value Setting
-        SphereBVH[index].bounds = parent;
         if (numObjects > 0) {
-            SphereBVH[index].index = _spheres.FindIndex(x => x == spheres[0]);
+            // Left Child Decisions
+            if (numObjects > 1 && depth <= SphereDepth) {
+                // Recursion
+                if (list1.Count > 0 && depth < SphereDepth) {
+                    CreateBVH_Spheres(newBounds[0], list1, depth + 1, index - (SphereDepth - depth));
+                } else if (list1.Count > 1) {
+                    // DEBUG Message for now, will figure out how to handle better later !!!!!
+                    Debug.Log("<WARNING> Overlapping bounds left some spheres out of BVH Tree");
+                }
+            }
+
+            // Catch up BVH with empty nodes
+            /*
+            while (SphereBVH.Count < index) {
+                newNode = new BVHNode();
+                newNode.index = -1;
+
+                SphereBVH.Add(newNode);
+                Debug.Log("!!!!! Empty Node Inserted");
+            } //*/
+
+            // Debug Drawing
+            GizmoList.Add(new GizmoBox(parent, new Color(0.0f, 1.0f, 0.0f, 0.5f)));
+            Debug.Log("Depth = " + depth);
+
+            // Node Addition
+            newNode = new BVHNode();
+            newNode.bounds = parent;
+            newNode.index = -1;
+
+            if (numObjects == 1 || (numObjects >= 1 && depth >= SphereDepth)) {
+                newNode.index = _spheres.FindIndex(x => (x == spheres[0]));
+            }
+
+            SphereBVH.Add(newNode);
+
+            // Right Child Decisions
+            if (numObjects > 1 && depth <= SphereDepth) {
+                // Recursion
+                if (list2.Count > 0 && depth < SphereDepth) {
+                    CreateBVH_Spheres(newBounds[1], list2, depth + 1, index + (SphereDepth - depth));
+                } else if (list2.Count > 1) {
+                    // DEBUG Message for now, will figure out how to handle better later !!!!!
+                    Debug.Log("<WARNING> Overlapping bounds left some spheres out of BVH Tree");
+                }
+            }
         }
     }
 
     /// RebuildTrees(): Rebuild Bounding Volume Tree for Ray Trace Objects ///
     private void RebuildTrees(Bounds[] rootBounds) {
         // Mesh Tree Rebuilding
-        /*
-        rotBounds meshRoot = new rotBounds();
-        meshRoot.min = rootBounds[0].min;
-        meshRoot.max = rootBounds[0].max;
-        meshRoot.localToWorldMatrix = UnityEngine.Matrix4x4.identity;
-        int treeSize = SplitSphereMesh(meshRoot, _meshObjects);
-        //*/
+        MeshDepth = Mathf.CeilToInt(Mathf.Log(_meshObjects.Count)) + 1;
+        int MeshLength = (int) Mathf.Round(Mathf.Pow(2.0f, (float) MeshDepth)) - 1;
+        CreateBVH_MeshObjects(rootBounds[0], _meshObjects, 1, (int) ((MeshLength - 1) / 2.0f));
 
         // Sphere BVH Tree Rebuilding
         SphereDepth = Mathf.CeilToInt(Mathf.Log(_spheres.Count)) + 1;
         int SphereLength = (int) Mathf.Round(Mathf.Pow(2.0f, (float) SphereDepth)) - 1;
-
-        for (int i = 0; i < SphereLength; i++) {
-            BVHNode newNode = new BVHNode();
-            newNode.index = -1;
-
-            SphereBVH.Add(newNode);
-        }
-
-        CreateBVH_Spheres(rootBounds[1], _spheres, 1, (int) ((SphereLength - 1) / 2.0f), out SphereBVH);
+        CreateBVH_Spheres(rootBounds[1], _spheres, 1, (int) ((SphereLength - 1) / 2.0f));
 
         // Debug Reporting
         if (DEBUG) {
-            Debug.Log("[SPHERES] Depth: " + SphereDepth + ", Length:" + SphereLength);
+            Debug.Log("[MESH OBJECTS] Depth: " + MeshDepth + ", Calculated Length: " + MeshLength + ", Real Length: " + MeshBVH.Count);
+            Debug.Log("[SPHERES] Depth: " + SphereDepth + ", Calculated Length: " + SphereLength + ", Real Length: " + SphereBVH.Count);
         }
 
         // DEBUG Drawing
-        debugBoundsList.Add(rootBounds[1]);
+        GizmoList.Add(new GizmoBox(rootBounds[0], new Color(1.0f, 0.0f, 0.0f, 1.0f)));
+        GizmoList.Add(new GizmoBox(rootBounds[1], new Color(0.0f, 1.0f, 0.0f, 1.0f)));
 
         // Update Computer buffers
         CreateComputeBuffer(ref _meshObjectBuffer, _meshObjects, MeshObjectStructSize);
@@ -541,35 +746,32 @@ public class RayTraceMaster : MonoBehaviour {
         Render(destination);
     }
 
-    /// OnDrawGizmos(): Debug Drawing ///
+    /// OnDrawGizmos(): Debug Bounds Drawing ///
     void OnDrawGizmos() {
-        // Setup Variables
-        float i = 0;
-        float maxi = debugBoundsList.Count;
-
         // Draw each bound
-        foreach (Bounds bound in debugBoundsList) {
+        Bounds bounds;
+        foreach (GizmoBox box in GizmoList) {
             // Change color
-            Gizmos.color = new Color(i / maxi, 0.5f, 0.5f, 1.0f / maxi);
-            i++;
+            Gizmos.color = box.color;
+            bounds = box.bounds;
 
             // Setup Corners
-            UnityEngine.Vector3 corner1 = new UnityEngine.Vector3(bound.max.x, bound.min.y, bound.min.z);
-            UnityEngine.Vector3 corner2 = new UnityEngine.Vector3(bound.min.x, bound.max.y, bound.min.z);
-            UnityEngine.Vector3 corner3 = new UnityEngine.Vector3(bound.min.x, bound.min.y, bound.max.z);
+            UnityEngine.Vector3 corner1 = new UnityEngine.Vector3(bounds.max.x, bounds.min.y, bounds.min.z);
+            UnityEngine.Vector3 corner2 = new UnityEngine.Vector3(bounds.min.x, bounds.max.y, bounds.min.z);
+            UnityEngine.Vector3 corner3 = new UnityEngine.Vector3(bounds.min.x, bounds.min.y, bounds.max.z);
 
-            UnityEngine.Vector3 corner4 = new UnityEngine.Vector3(bound.min.x, bound.max.y, bound.max.z);
-            UnityEngine.Vector3 corner5 = new UnityEngine.Vector3(bound.max.x, bound.min.y, bound.max.z);
-            UnityEngine.Vector3 corner6 = new UnityEngine.Vector3(bound.max.x, bound.max.y, bound.min.z);
+            UnityEngine.Vector3 corner4 = new UnityEngine.Vector3(bounds.min.x, bounds.max.y, bounds.max.z);
+            UnityEngine.Vector3 corner5 = new UnityEngine.Vector3(bounds.max.x, bounds.min.y, bounds.max.z);
+            UnityEngine.Vector3 corner6 = new UnityEngine.Vector3(bounds.max.x, bounds.max.y, bounds.min.z);
 
             // Drawing lines
-            Gizmos.DrawLine(bound.min, corner1);
-            Gizmos.DrawLine(bound.min, corner2);
-            Gizmos.DrawLine(bound.min, corner3);
+            Gizmos.DrawLine(bounds.min, corner1);
+            Gizmos.DrawLine(bounds.min, corner2);
+            Gizmos.DrawLine(bounds.min, corner3);
 
-            Gizmos.DrawLine(bound.max, corner4);
-            Gizmos.DrawLine(bound.max, corner5);
-            Gizmos.DrawLine(bound.max, corner6);
+            Gizmos.DrawLine(bounds.max, corner4);
+            Gizmos.DrawLine(bounds.max, corner5);
+            Gizmos.DrawLine(bounds.max, corner6);
 
             Gizmos.DrawLine(corner1, corner5);
             Gizmos.DrawLine(corner1, corner6);
