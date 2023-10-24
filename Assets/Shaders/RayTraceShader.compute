@@ -17,6 +17,9 @@ float _Seed;
 int _numBounces;
 int _numRays;
 
+int _meshDepth;
+int _sphereDepth;
+
 /// Structs ///
 struct Ray {
     float3 origin;
@@ -38,12 +41,6 @@ struct RayHit {
     RayTraceParams lighting;
 };
 
-struct Sphere {
-    float3 position;
-    float radius;
-    RayTraceParams lighting;
-};
-
 struct MeshObject {
     float4x4 localToWorldMatrix;
     int indices_offset;
@@ -52,11 +49,27 @@ struct MeshObject {
     RayTraceParams lighting;
 };
 
-/// Buffers ////
-StructuredBuffer<Sphere> _Spheres;
+struct Sphere {
+    float3 position;
+    float radius;
+    RayTraceParams lighting;
+};
+
+struct BVHNode {
+    float3 vmin;
+    float3 vmax;
+    int index;
+};
+
+/// Buffers ///
 StructuredBuffer<MeshObject> _MeshObjects;
 StructuredBuffer<float3> _Vertices;
 StructuredBuffer<int> _Indices;
+StructuredBuffer<Sphere> _Spheres;
+
+StructuredBuffer<BVHNode> _MeshBVH;
+StructuredBuffer<BVHNode> _SphereBVH;
+
 
 /// Rand() ///
 float rand() {
@@ -245,6 +258,54 @@ void IntersectMeshObject(Ray ray, inout RayHit bestHit, MeshObject meshObject) {
     }
 }
 
+/// IntersectBVHNode(): Axis-Aligned Bounding Box intersection test (for using binary volume search) ///
+bool IntersectBVHNode(Ray ray, BVHNode node) {
+    return true;
+    // Calculate position & time ray hits vmin.y
+    float t_min = (node.vmin.y - ray.origin.y) / (ray.direction.y - (EPSILON * sign(node.vmin.y - ray.origin.y)));
+    float x_min = (ray.direction.x * t_min) + ray.origin.x;
+    float z_min = (ray.direction.z * t_min) + ray.origin.z;
+
+    // Calculate position & time ray hits vmax.y
+    float t_max = (node.vmax.y - ray.origin.y) / (ray.direction.y + (EPSILON * sign(node.vmax.y - ray.origin.y)));
+    float x_max = (ray.direction.x * t_max) + ray.origin.x;
+    float z_max = (ray.direction.z * t_max) + ray.origin.z;
+
+    // Return
+    return ((t_min >= 0 && (node.vmin.x <= x_min && x_min <= node.vmax.x) && (node.vmin.z <= z_min && z_min <= node.vmax.z)) ||
+            (t_max >= 0 && (node.vmin.x <= x_max && x_max <= node.vmax.x) && (node.vmin.z <= z_max && z_max <= node.vmax.z)));
+}
+
+/// IntersectMeshBVH(): Recursive search through MeshBVH ///
+void IntersectMeshBVH(Ray ray, inout RayHit bestHit, int index, int depth) {
+    // Check if box is even hit
+    if (depth > 0 && IntersectBVHNode(ray, _MeshBVH[index])) {
+        if (_MeshBVH[index].index >= 0) {
+            // At a leaf where there is a sphere to test
+            IntersectMeshObject(ray, bestHit, _MeshObjects[_MeshBVH[index].index]);
+        } else {
+            // Not yet at a leaf yet so search further through children
+            IntersectMeshBVH(ray, bestHit, index - pow(2, depth - 2), depth - 1);
+            IntersectMeshBVH(ray, bestHit, index + pow(2, depth - 2), depth - 1);
+        }
+    }
+}
+
+/// IntersectSphereBVH(): Recursive search through SphereBVH ///
+void IntersectSphereBVH(Ray ray, inout RayHit bestHit, int index, int depth) {
+    // Check if box is even hit
+    if (depth > 0 && IntersectBVHNode(ray, _SphereBVH[index])) {
+        if (_SphereBVH[index].index >= 0) {
+            // At a leaf where there is a sphere to test
+            IntersectSphere(ray, bestHit, _Spheres[_SphereBVH[index].index]);
+        } else {
+            // Not yet at a leaf yet so search further through children
+            IntersectSphereBVH(ray, bestHit, index - pow(2, depth - 2), depth - 1);
+            IntersectSphereBVH(ray, bestHit, index + pow(2, depth - 2), depth - 1);
+        }
+    }
+}
+
 /// Trace() ///
 RayHit Trace(Ray ray) {
     // Setup variables
@@ -256,15 +317,11 @@ RayHit Trace(Ray ray) {
 
     // Trace Spheres
     _Spheres.GetDimensions(count, stride);
-    for (i = 0; i < count; i++) {
-        IntersectSphere(ray, bestHit, _Spheres[i]);
-    }
+    IntersectSphereBVH(ray, bestHit, (int) ((count - 1) / 2), _sphereDepth);
 
     // Trace Mesh Objects
     _MeshObjects.GetDimensions(count, stride);
-    for (i = 0; i < count; i++) {
-        IntersectMeshObject(ray, bestHit, _MeshObjects[i]);
-    }
+    IntersectMeshBVH(ray, bestHit, (int) ((count - 1) / 2), _meshDepth);
 
     // Final Return
     return bestHit;

@@ -23,7 +23,7 @@ public class RayTraceMaster : MonoBehaviour {
     private static bool _treesNeedRebuilding = false;
 
     private static List<MeshObject> _meshObjects = new List<MeshObject>();
-    private static List<UnityEngine.Vector3> _vertices = new List<UnityEngine.Vector3>();
+    private static List<Vector3> _vertices = new List<Vector3>();
     private static List<int> _indices = new List<int>();
 
     private static List<Sphere> _spheres = new List<Sphere>();
@@ -32,17 +32,19 @@ public class RayTraceMaster : MonoBehaviour {
     private ComputeBuffer _vertexBuffer;
     private ComputeBuffer _indexBuffer;
     private ComputeBuffer _sphereBuffer;
+    private ComputeBuffer _meshObjectBVHBuffer;
+    private ComputeBuffer _sphereBVHBuffer;
 
     private static int RayTraceParamsStructSize = 40;
     private static int MeshObjectStructSize = 72 + RayTraceParamsStructSize;
     private static int SphereStructSize = 16 + RayTraceParamsStructSize;
-    private static int BVHBaseSize = 0; // ====================================================== [WIP] depends on how data is structured to send to GPU
+    private static int BVHNodeSize = 28;
     
     /// General Structs ///
     public struct RayTraceParams {
-        public UnityEngine.Vector3 color_albedo;
-        public UnityEngine.Vector3 color_specular;
-        public UnityEngine.Vector3 emission;
+        public Vector3 color_albedo;
+        public Vector3 color_specular;
+        public Vector3 emission;
         public float smoothness;
 
         public bool Equals(RayTraceParams other) {
@@ -73,40 +75,8 @@ public class RayTraceMaster : MonoBehaviour {
         }
     };
 
-    public struct Sphere {
-        public UnityEngine.Vector3 position;
-        public float radius;
-        public RayTraceParams lighting;
-
-        public bool Equals(Sphere other) {
-            return (other.position == position && other.radius == radius && other.lighting == lighting);
-        }
-
-        public override bool Equals(object obj) {
-            return (obj != null && GetType() == obj.GetType() && this.Equals((Sphere) obj));
-        }
-
-        public override int GetHashCode() {
-            unchecked {
-                int hash = 17;
-                hash = (hash * 23) + position.GetHashCode();
-                hash = (hash * 23) + radius.GetHashCode();
-                hash = (hash * 23) + lighting.GetHashCode();
-                return hash;
-            }
-        }
-
-        public static bool operator ==(Sphere s1, Sphere s2) {
-            return s1.Equals(s2);
-        }
-
-        public static bool operator !=(Sphere s1, Sphere s2) {
-            return !s1.Equals(s2);
-        }
-    };
-
     public struct MeshObject {
-        public UnityEngine.Matrix4x4 localToWorldMatrix;
+        public Matrix4x4 localToWorldMatrix;
         public int indices_offset;
         public int indices_count;
         public RayTraceParams lighting;
@@ -139,8 +109,41 @@ public class RayTraceMaster : MonoBehaviour {
         }
     };
 
+    public struct Sphere {
+        public Vector3 position;
+        public float radius;
+        public RayTraceParams lighting;
+
+        public bool Equals(Sphere other) {
+            return (other.position == position && other.radius == radius && other.lighting == lighting);
+        }
+
+        public override bool Equals(object obj) {
+            return (obj != null && GetType() == obj.GetType() && this.Equals((Sphere) obj));
+        }
+
+        public override int GetHashCode() {
+            unchecked {
+                int hash = 17;
+                hash = (hash * 23) + position.GetHashCode();
+                hash = (hash * 23) + radius.GetHashCode();
+                hash = (hash * 23) + lighting.GetHashCode();
+                return hash;
+            }
+        }
+
+        public static bool operator ==(Sphere s1, Sphere s2) {
+            return s1.Equals(s2);
+        }
+
+        public static bool operator !=(Sphere s1, Sphere s2) {
+            return !s1.Equals(s2);
+        }
+    };
+
     public struct BVHNode {
-        public Bounds bounds; // ========================================= [WIP] Need to split up into better data for GPU to use
+        public Vector3 vmin;
+        public Vector3 vmax;
         public int index;
     };
 
@@ -166,6 +169,14 @@ public class RayTraceMaster : MonoBehaviour {
             _meshObjectBuffer.Release();
             _vertexBuffer.Release();
             _indexBuffer.Release();
+        }
+
+        if (_sphereBVHBuffer != null) {
+            _sphereBVHBuffer.Release();
+        }
+
+        if (_meshObjectBVHBuffer != null) {
+            _meshObjectBVHBuffer.Release();
         }
     }
 
@@ -241,9 +252,9 @@ public class RayTraceMaster : MonoBehaviour {
                     SphereBoundsList.Add(obj.bounds);
 
                     // Add Lighting Parameters
-                    _lighting.color_albedo = new UnityEngine.Vector3(obj.albedoColor.r, obj.albedoColor.g, obj.albedoColor.b);
-                    _lighting.color_specular = new UnityEngine.Vector3(obj.specularColor.r, obj.specularColor.g, obj.specularColor.b);
-                    _lighting.emission = new UnityEngine.Vector3(obj.emissionColor.r, obj.emissionColor.g, obj.emissionColor.b);
+                    _lighting.color_albedo = new Vector3(obj.albedoColor.r, obj.albedoColor.g, obj.albedoColor.b);
+                    _lighting.color_specular = new Vector3(obj.specularColor.r, obj.specularColor.g, obj.specularColor.b);
+                    _lighting.emission = new Vector3(obj.emissionColor.r, obj.emissionColor.g, obj.emissionColor.b);
                     _lighting.smoothness = obj.smoothness;
 
                     // Add to list
@@ -272,9 +283,9 @@ public class RayTraceMaster : MonoBehaviour {
                     _indices.AddRange(indices.Select(index => index + firstVertex));
 
                     // Add Lighting Parameters
-                    _lighting.color_albedo = new UnityEngine.Vector3(obj.albedoColor.r, obj.albedoColor.g, obj.albedoColor.b);
-                    _lighting.color_specular = new UnityEngine.Vector3(obj.specularColor.r, obj.specularColor.g, obj.specularColor.b);
-                    _lighting.emission = new UnityEngine.Vector3(obj.emissionColor.r, obj.emissionColor.g, obj.emissionColor.b);
+                    _lighting.color_albedo = new Vector3(obj.albedoColor.r, obj.albedoColor.g, obj.albedoColor.b);
+                    _lighting.color_specular = new Vector3(obj.specularColor.r, obj.specularColor.g, obj.specularColor.b);
+                    _lighting.emission = new Vector3(obj.emissionColor.r, obj.emissionColor.g, obj.emissionColor.b);
                     _lighting.smoothness = obj.smoothness;
 
                     // Add the object itself
@@ -323,9 +334,9 @@ public class RayTraceMaster : MonoBehaviour {
     }
 
     /// ComputeCenter(MeshObjects): Compute center of all mesh objects in bounding box /// [WIP] ========================================================== ! ! ! ! !
-    private UnityEngine.Vector3 ComputeCenter(List<MeshObject> meshObjects) {
+    private Vector3 ComputeCenter(List<MeshObject> meshObjects) {
         // Variables
-        UnityEngine.Vector3 avePoint = new UnityEngine.Vector3();
+        Vector3 avePoint = new Vector3();
         float numPoints = 0.0f;
 
         // Adding Coordinates
@@ -341,9 +352,9 @@ public class RayTraceMaster : MonoBehaviour {
     }
     
     /// ComputeCenter(Spheres): Compute center of all spheres in bounding box ///
-    private UnityEngine.Vector3 ComputeCenter(List<Sphere> spheres) {
+    private Vector3 ComputeCenter(List<Sphere> spheres) {
         // Variables
-        UnityEngine.Vector3 avePoint = new UnityEngine.Vector3(0.0f, 0.0f, 0.0f);
+        Vector3 avePoint = new Vector3(0.0f, 0.0f, 0.0f);
         float numPoints = (float) spheres.Count;
 
         // Adding Coordinates
@@ -356,7 +367,7 @@ public class RayTraceMaster : MonoBehaviour {
     }
 
     /// SplitBounds() ///
-    private Bounds[] SplitBounds(UnityEngine.Vector3 start, UnityEngine.Vector3 extents, LayerMask mask, int count) {
+    private Bounds[] SplitBounds(Vector3 start, Vector3 extents, LayerMask mask, int count) {
         // Setup Variables
         float[] counts = {count / 2.0f, count / 2.0f, count / 2.0f};
         int hitIndex = 0;
@@ -365,13 +376,13 @@ public class RayTraceMaster : MonoBehaviour {
         Collider[][] FrontHits = new Collider[3][];
         Collider[][] BackHits = new Collider[3][];
 
-        FrontHits[0] = Physics.OverlapBox(start + new UnityEngine.Vector3(extents.x / 2.0f, 0, 0), new UnityEngine.Vector3(extents.x / 2.0f, extents.y, extents.z), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // x-axis test
-        FrontHits[1] = Physics.OverlapBox(start + new UnityEngine.Vector3(0, extents.y / 2.0f, 0), new UnityEngine.Vector3(extents.x, extents.y / 2.0f, extents.z), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // y-axis test
-        FrontHits[2] = Physics.OverlapBox(start + new UnityEngine.Vector3(0, 0, extents.z / 2.0f), new UnityEngine.Vector3(extents.x, extents.y, extents.z / 2.0f), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // z-axis test
+        FrontHits[0] = Physics.OverlapBox(start + new Vector3(extents.x / 2.0f, 0, 0), new Vector3(extents.x / 2.0f, extents.y, extents.z), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // x-axis test
+        FrontHits[1] = Physics.OverlapBox(start + new Vector3(0, extents.y / 2.0f, 0), new Vector3(extents.x, extents.y / 2.0f, extents.z), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // y-axis test
+        FrontHits[2] = Physics.OverlapBox(start + new Vector3(0, 0, extents.z / 2.0f), new Vector3(extents.x, extents.y, extents.z / 2.0f), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // z-axis test
 
-        BackHits[0] = Physics.OverlapBox(start - new UnityEngine.Vector3(extents.x / 2.0f, 0, 0), new UnityEngine.Vector3(extents.x / 2.0f, extents.y, extents.z), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // x-axis test
-        BackHits[1] = Physics.OverlapBox(start - new UnityEngine.Vector3(0, extents.y / 2.0f, 0), new UnityEngine.Vector3(extents.x, extents.y / 2.0f, extents.z), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // y-axis test
-        BackHits[2] = Physics.OverlapBox(start - new UnityEngine.Vector3(0, 0, extents.z / 2.0f), new UnityEngine.Vector3(extents.x, extents.y, extents.z / 2.0f), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // z-axis test
+        BackHits[0] = Physics.OverlapBox(start - new Vector3(extents.x / 2.0f, 0, 0), new Vector3(extents.x / 2.0f, extents.y, extents.z), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // x-axis test
+        BackHits[1] = Physics.OverlapBox(start - new Vector3(0, extents.y / 2.0f, 0), new Vector3(extents.x, extents.y / 2.0f, extents.z), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // y-axis test
+        BackHits[2] = Physics.OverlapBox(start - new Vector3(0, 0, extents.z / 2.0f), new Vector3(extents.x, extents.y, extents.z / 2.0f), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // z-axis test
 
         // Compare slicing axes
         for (int i = 0; i < 3; i++) {
@@ -507,7 +518,8 @@ public class RayTraceMaster : MonoBehaviour {
 
             // Node Addition
             newNode = new BVHNode();
-            newNode.bounds = parent;
+            newNode.vmin = parent.min;
+            newNode.vmax = parent.max;
             newNode.index = -1;
 
             if (numObjects == 1 || (numObjects >= 1 && depth >= MeshDepth)) {
@@ -570,7 +582,8 @@ public class RayTraceMaster : MonoBehaviour {
 
             // Node Addition
             newNode = new BVHNode();
-            newNode.bounds = parent;
+            newNode.vmin = parent.min;
+            newNode.vmax = parent.max;
             newNode.index = -1;
 
             if (numObjects == 1 || (numObjects >= 1 && depth >= SphereDepth)) {
@@ -615,6 +628,9 @@ public class RayTraceMaster : MonoBehaviour {
         CreateComputeBuffer(ref _vertexBuffer, _vertices, 12);
         CreateComputeBuffer(ref _indexBuffer, _indices, 4);
         CreateComputeBuffer(ref _sphereBuffer, _spheres, SphereStructSize);
+
+        CreateComputeBuffer(ref _meshObjectBVHBuffer, MeshBVH, BVHNodeSize);
+        CreateComputeBuffer(ref _sphereBVHBuffer, SphereBVH, BVHNodeSize);
     }
 
     /// Awake(): Camera setup///
@@ -641,15 +657,23 @@ public class RayTraceMaster : MonoBehaviour {
         RayTraceShader.SetMatrix("_CameraInverseProjection", _camera.projectionMatrix.inverse);
 
         RayTraceShader.SetTexture(0, "_SkyboxTexture", SkyboxTexture);
-        RayTraceShader.SetVector("_PixelOffset", new Vector2(UnityEngine.Random.value, UnityEngine.Random.value));
-        RayTraceShader.SetFloat("_Seed", UnityEngine.Random.value);
+        RayTraceShader.SetVector("_PixelOffset", new Vector2(Random.value, Random.value));
+        RayTraceShader.SetFloat("_Seed", Random.value);
+
         RayTraceShader.SetInt("_numBounces", numBounces);
         RayTraceShader.SetInt("_numRays", numRays);
+        
+        RayTraceShader.SetInt("_meshDepth", MeshDepth);
+        RayTraceShader.SetInt("_sphereDepth", SphereDepth);
 
-        SetComputeBuffer("_Spheres", _sphereBuffer);
+
         SetComputeBuffer("_MeshObjects", _meshObjectBuffer);
         SetComputeBuffer("_Vertices", _vertexBuffer);
         SetComputeBuffer("_Indices", _indexBuffer);
+        SetComputeBuffer("_Spheres", _sphereBuffer);
+
+        SetComputeBuffer("_MeshBVH", _meshObjectBVHBuffer);
+        SetComputeBuffer("_SphereBVH", _sphereBVHBuffer);
     }
 
     /// Render(): Initialize and dispatch the computer shader to render the scene ///
@@ -722,16 +746,16 @@ public class RayTraceMaster : MonoBehaviour {
     }
 
     /// GizmosDrawBox(): Debug Box Drawing ///
-    private void GizmosDrawBox(UnityEngine.Vector3 min, UnityEngine.Vector3 max) {
+    private void GizmosDrawBox(Vector3 min, Vector3 max) {
         // Setup Corners
         // NOTE: Corner7 and Corner8 are just max and min directly
-        UnityEngine.Vector3 corner1 = new UnityEngine.Vector3(max.x, min.y, min.z);
-        UnityEngine.Vector3 corner2 = new UnityEngine.Vector3(min.x, max.y, min.z);
-        UnityEngine.Vector3 corner3 = new UnityEngine.Vector3(min.x, min.y, max.z);
+        Vector3 corner1 = new Vector3(max.x, min.y, min.z);
+        Vector3 corner2 = new Vector3(min.x, max.y, min.z);
+        Vector3 corner3 = new Vector3(min.x, min.y, max.z);
 
-        UnityEngine.Vector3 corner4 = new UnityEngine.Vector3(min.x, max.y, max.z);
-        UnityEngine.Vector3 corner5 = new UnityEngine.Vector3(max.x, min.y, max.z);
-        UnityEngine.Vector3 corner6 = new UnityEngine.Vector3(max.x, max.y, min.z);
+        Vector3 corner4 = new Vector3(min.x, max.y, max.z);
+        Vector3 corner5 = new Vector3(max.x, min.y, max.z);
+        Vector3 corner6 = new Vector3(max.x, max.y, min.z);
 
         // Drawing lines
         Gizmos.DrawLine(min, corner1);
@@ -760,12 +784,12 @@ public class RayTraceMaster : MonoBehaviour {
 
             // Draw Bounding Volume
             Gizmos.color = col;
-            GizmosDrawBox(node.bounds.min, node.bounds.max);
+            GizmosDrawBox(node.vmin, node.vmax);
 
             // Draw info (position in tree list, index of object)
             GUIStyle style = new GUIStyle();
             style.normal.textColor = (col*2.0f + Color.white) / 3.0f;
-            UnityEditor.Handles.Label((node.bounds.min + node.bounds.max) / 2.0f, "(" + index.ToString() + ", " + node.index.ToString() + ")", style);
+            UnityEditor.Handles.Label((node.vmin + node.vmax) / 2.0f, "(" + index.ToString() + ", " + node.index.ToString() + ")", style);
 
             // Recursion downwards
             int step = (int) Mathf.Floor(Mathf.Pow(2, depth - 2));
