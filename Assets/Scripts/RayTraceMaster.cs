@@ -151,19 +151,6 @@ public class RayTraceMaster : MonoBehaviour {
     private static List<BVHNode> SphereBVH = new List<BVHNode>();
     private static int SphereDepth = 0;
 
-    // Debug
-    public struct GizmoBox {
-        public Bounds bounds;
-        public Color color;
-
-        public GizmoBox(Bounds b, Color c) {
-            bounds = b;
-            color = c;
-        }
-    }
-
-    private static List<GizmoBox> GizmoList = new List<GizmoBox>();
-
     /// OnEnable(): loads in the scene ///
     private void OnEnable() {
         _currentSample = 0;
@@ -518,10 +505,6 @@ public class RayTraceMaster : MonoBehaviour {
                 Debug.Log("!!!!! Empty Node Inserted");
             } //*/
 
-            // Debug Drawing
-            GizmoList.Add(new GizmoBox(parent, new Color(1.0f, 0.0f, 0.0f, 0.5f)));
-            Debug.Log("Depth = " + depth);
-
             // Node Addition
             newNode = new BVHNode();
             newNode.bounds = parent;
@@ -585,10 +568,6 @@ public class RayTraceMaster : MonoBehaviour {
                 Debug.Log("!!!!! Empty Node Inserted");
             } //*/
 
-            // Debug Drawing
-            GizmoList.Add(new GizmoBox(parent, new Color(0.0f, 1.0f, 0.0f, 0.5f)));
-            Debug.Log("Depth = " + depth);
-
             // Node Addition
             newNode = new BVHNode();
             newNode.bounds = parent;
@@ -630,10 +609,6 @@ public class RayTraceMaster : MonoBehaviour {
             Debug.Log("[MESH OBJECTS] Depth: " + MeshDepth + ", Calculated Length: " + MeshLength + ", Real Length: " + MeshBVH.Count);
             Debug.Log("[SPHERES] Depth: " + SphereDepth + ", Calculated Length: " + SphereLength + ", Real Length: " + SphereBVH.Count);
         }
-
-        // DEBUG Drawing
-        GizmoList.Add(new GizmoBox(rootBounds[0], new Color(1.0f, 0.0f, 0.0f, 1.0f)));
-        GizmoList.Add(new GizmoBox(rootBounds[1], new Color(0.0f, 1.0f, 0.0f, 1.0f)));
 
         // Update Computer buffers
         CreateComputeBuffer(ref _meshObjectBuffer, _meshObjects, MeshObjectStructSize);
@@ -746,41 +721,63 @@ public class RayTraceMaster : MonoBehaviour {
         Render(destination);
     }
 
-    /// OnDrawGizmos(): Debug Bounds Drawing ///
-    void OnDrawGizmos() {
-        // Draw each bound
-        Bounds bounds;
-        foreach (GizmoBox box in GizmoList) {
-            // Change color
-            Gizmos.color = box.color;
-            bounds = box.bounds;
+    /// GizmosDrawBox(): Debug Box Drawing ///
+    private void GizmosDrawBox(UnityEngine.Vector3 min, UnityEngine.Vector3 max) {
+        // Setup Corners
+        // NOTE: Corner7 and Corner8 are just max and min directly
+        UnityEngine.Vector3 corner1 = new UnityEngine.Vector3(max.x, min.y, min.z);
+        UnityEngine.Vector3 corner2 = new UnityEngine.Vector3(min.x, max.y, min.z);
+        UnityEngine.Vector3 corner3 = new UnityEngine.Vector3(min.x, min.y, max.z);
 
-            // Setup Corners
-            UnityEngine.Vector3 corner1 = new UnityEngine.Vector3(bounds.max.x, bounds.min.y, bounds.min.z);
-            UnityEngine.Vector3 corner2 = new UnityEngine.Vector3(bounds.min.x, bounds.max.y, bounds.min.z);
-            UnityEngine.Vector3 corner3 = new UnityEngine.Vector3(bounds.min.x, bounds.min.y, bounds.max.z);
+        UnityEngine.Vector3 corner4 = new UnityEngine.Vector3(min.x, max.y, max.z);
+        UnityEngine.Vector3 corner5 = new UnityEngine.Vector3(max.x, min.y, max.z);
+        UnityEngine.Vector3 corner6 = new UnityEngine.Vector3(max.x, max.y, min.z);
 
-            UnityEngine.Vector3 corner4 = new UnityEngine.Vector3(bounds.min.x, bounds.max.y, bounds.max.z);
-            UnityEngine.Vector3 corner5 = new UnityEngine.Vector3(bounds.max.x, bounds.min.y, bounds.max.z);
-            UnityEngine.Vector3 corner6 = new UnityEngine.Vector3(bounds.max.x, bounds.max.y, bounds.min.z);
+        // Drawing lines
+        Gizmos.DrawLine(min, corner1);
+        Gizmos.DrawLine(min, corner2);
+        Gizmos.DrawLine(min, corner3);
 
-            // Drawing lines
-            Gizmos.DrawLine(bounds.min, corner1);
-            Gizmos.DrawLine(bounds.min, corner2);
-            Gizmos.DrawLine(bounds.min, corner3);
+        Gizmos.DrawLine(max, corner4);
+        Gizmos.DrawLine(max, corner5);
+        Gizmos.DrawLine(max, corner6);
 
-            Gizmos.DrawLine(bounds.max, corner4);
-            Gizmos.DrawLine(bounds.max, corner5);
-            Gizmos.DrawLine(bounds.max, corner6);
+        Gizmos.DrawLine(corner1, corner5);
+        Gizmos.DrawLine(corner1, corner6);
 
-            Gizmos.DrawLine(corner1, corner5);
-            Gizmos.DrawLine(corner1, corner6);
+        Gizmos.DrawLine(corner2, corner4);
+        Gizmos.DrawLine(corner2, corner6);
 
-            Gizmos.DrawLine(corner2, corner4);
-            Gizmos.DrawLine(corner2, corner6);
+        Gizmos.DrawLine(corner3, corner4);
+        Gizmos.DrawLine(corner3, corner5);
+    }
 
-            Gizmos.DrawLine(corner3, corner4);
-            Gizmos.DrawLine(corner3, corner5);
+    /// GizmosDrawTree(): Debug Tree Drawing ///
+    private void GizmosDrawTree(List<BVHNode> list, int index, int depth, Color col, float colChange) {
+        if (depth > 0) {
+            // Get node
+            BVHNode node = list[index];
+
+            // Draw Bounding Volume
+            Gizmos.color = col;
+            GizmosDrawBox(node.bounds.min, node.bounds.max);
+
+            // Draw info (position in tree list, index of object)
+            GUIStyle style = new GUIStyle();
+            style.normal.textColor = (col*2.0f + Color.white) / 3.0f;
+            UnityEditor.Handles.Label((node.bounds.min + node.bounds.max) / 2.0f, "(" + index.ToString() + ", " + node.index.ToString() + ")", style);
+
+            // Recursion downwards
+            int step = (int) Mathf.Floor(Mathf.Pow(2, depth - 2));
+            GizmosDrawTree(list, index - step, depth - 1, new Color(col.r + colChange, col.g - colChange, col.b - colChange), colChange);
+            GizmosDrawTree(list, index + step, depth - 1, new Color(col.r + colChange, col.g - colChange, col.b - colChange), colChange);
         }
+    }
+
+    /// OnDrawGizmos(): Debug Drawing ///
+    void OnDrawGizmos() {
+        // Drawing BVH Trees
+        GizmosDrawTree(SphereBVH, (SphereBVH.Count - 1) / 2, SphereDepth, new Color(0.0f, 0.0f, 1.0f), 1.0f / SphereDepth);
+        GizmosDrawTree(MeshBVH, (MeshBVH.Count - 1) / 2, MeshDepth, new Color(0.0f, 1.0f, 0.0f), 1.0f / MeshDepth);
     }
 }
