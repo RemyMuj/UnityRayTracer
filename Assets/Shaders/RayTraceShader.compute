@@ -258,7 +258,7 @@ void IntersectMeshObject(Ray ray, inout RayHit bestHit, MeshObject meshObject) {
     }
 }
 
-/// IntersectBVHNode(): Axis-Aligned Bounding Box intersection test (for using binary volume search) ///
+/// IntersectBVHNode(): Axis-Aligned Bounding Box intersection test (for using binary volume search) /// !!!! [WIP]: this is currently wrong. Needs to be rethought and rewritten. !!!!!
 bool IntersectBVHNode(Ray ray, BVHNode node) {
     return true;
     // Calculate position & time ray hits vmin.y
@@ -276,7 +276,7 @@ bool IntersectBVHNode(Ray ray, BVHNode node) {
             (t_max >= 0 && (node.vmin.x <= x_max && x_max <= node.vmax.x) && (node.vmin.z <= z_max && z_max <= node.vmax.z)));
 }
 
-/// IntersectMeshBVH(): Recursive search through MeshBVH ///
+/// IntersectMeshBVH(): Recursive search through MeshBVH /// !!!!! [WIP]: HLSL doesn't allow recursion. Needs to be rewritten. !!!!!
 void IntersectMeshBVH(Ray ray, inout RayHit bestHit, int index, int depth) {
     // Check if box is even hit
     if (depth > 0 && IntersectBVHNode(ray, _MeshBVH[index])) {
@@ -291,7 +291,7 @@ void IntersectMeshBVH(Ray ray, inout RayHit bestHit, int index, int depth) {
     }
 }
 
-/// IntersectSphereBVH(): Recursive search through SphereBVH ///
+/// IntersectSphereBVH(): Recursive search through SphereBVH /// !!!!! [WIP]: HLSL doesn't allow recursion. Needs to be rewritten. !!!!!
 void IntersectSphereBVH(Ray ray, inout RayHit bestHit, int index, int depth) {
     // Check if box is even hit
     if (depth > 0 && IntersectBVHNode(ray, _SphereBVH[index])) {
