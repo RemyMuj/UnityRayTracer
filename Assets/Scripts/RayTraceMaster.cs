@@ -476,8 +476,8 @@ public class RayTraceMaster : MonoBehaviour {
         return list;
     }
 
-    /// CreateBVH_MeshObjects(): Recursively split scene into bounding volume hierachy for mesh objects ///
-    private void CreateBVH_MeshObjects(Bounds parent, List<MeshObject> meshes, int depth, int index) {
+    /// CreateBVH(): Create BVH for MeshObjects in scene ///
+    private void CreateBVH(Bounds parent, List<MeshObject> meshes, int depth, int index = 0) {
         // Setup Variables
         int numObjects = meshes.Count;
 
@@ -486,7 +486,6 @@ public class RayTraceMaster : MonoBehaviour {
         Bounds[] newBounds = SplitBounds(parent.center, parent.extents, LayerMask.GetMask("RayTrace_mesh"), numObjects);
         List<MeshObject> list1 = GetMeshObjectsInBound(newBounds[0]);
         List<MeshObject> list2 = GetMeshObjectsInBound(newBounds[1]);
-        BVHNode newNode;
 
         // Debug Report
         if (DEBUG) {
@@ -494,55 +493,47 @@ public class RayTraceMaster : MonoBehaviour {
             Debug.Log(" > Child1 List Length = " + list1.Count + ", Child2 List Length = " + list2.Count);
         }
 
+        // Decisions if nonempty
         if (numObjects > 0) {
             // Left Child Decisions
             if (numObjects > 1 && depth <= MeshDepth) {
                 // Recursion
                 if (list1.Count > 0 && depth < MeshDepth) {
-                    CreateBVH_MeshObjects(newBounds[0], list1, depth + 1, index - (MeshDepth - depth));
+                    CreateBVH(newBounds[0], list1, depth + 1, index*2 + 1);
                 } else if (list1.Count > 1) {
                     // DEBUG Message for now, will figure out how to handle better later !!!!!
                     Debug.Log("<WARNING> Overlapping bounds left some mesh objects out of BVH Tree");
                 }
             }
 
-            // Catch up BVH with empty nodes
-            /*
-            while (MeshBVH.Count < index) {
-                newNode = new BVHNode();
-                newNode.index = -1;
-
-                MeshBVH.Add(newNode);
-                Debug.Log("!!!!! Empty Node Inserted");
-            } //*/
-
-            // Node Addition
-            newNode = new BVHNode();
-            newNode.vmin = parent.min;
-            newNode.vmax = parent.max;
-            newNode.index = -1;
-
-            if (numObjects == 1 || (numObjects >= 1 && depth >= MeshDepth)) {
-                newNode.index = _meshObjects.FindIndex(x => (x == meshes[0]));
-            }
-
-            MeshBVH.Add(newNode);
-
             // Right Child Decisions
             if (numObjects > 1 && depth <= MeshDepth) {
                 // Recursion
                 if (list2.Count > 0 && depth < MeshDepth) {
-                    CreateBVH_MeshObjects(newBounds[1], list2, depth + 1, index + (MeshDepth - depth));
+                    CreateBVH(newBounds[1], list2, depth + 1, index*2 + 2);
                 } else if (list2.Count > 1) {
                     // DEBUG Message for now, will figure out how to handle better later !!!!!
                     Debug.Log("<WARNING> Overlapping bounds left some mesh objects out of BVH Tree");
                 }
             }
+
+            // Node Self Addition
+            BVHNode node = new BVHNode();
+            node.vmin = parent.min;
+            node.vmax = parent.max;
+            node.index = -1;
+
+            if (numObjects == 1 || (numObjects >= 1 && depth >= MeshDepth)) {
+                node.index = _meshObjects.FindIndex(x => (x == meshes[0]));
+            }
+
+            MeshBVH.RemoveAt(index);
+            MeshBVH.Insert(index, node);
         }
     }
 
-        /// CreateBVH_Spheres(): Recursively split scene into bounding volume hierachy for spheres ///
-    private void CreateBVH_Spheres(Bounds parent, List<Sphere> spheres, int depth, int index) {
+    /// CreateBVH(): Create BVH for Spheres in scene ///
+    private void CreateBVH(Bounds parent, List<Sphere> spheres, int depth, int index = 0) {
         // Setup Variables
         int numObjects = spheres.Count;
 
@@ -550,7 +541,6 @@ public class RayTraceMaster : MonoBehaviour {
         Bounds[] newBounds = SplitBounds(ComputeCenter(spheres), parent.extents, LayerMask.GetMask("RayTrace_sphere"), numObjects);
         List<Sphere> list1 = GetSpheresInBound(newBounds[0]);
         List<Sphere> list2 = GetSpheresInBound(newBounds[1]);
-        BVHNode newNode;
 
         // Debug Report
         if (DEBUG) {
@@ -558,69 +548,86 @@ public class RayTraceMaster : MonoBehaviour {
             Debug.Log(" > Child1 List Length = " + list1.Count + ", Child2 List Length = " + list2.Count);
         }
 
+        // Decisions if nonempty
         if (numObjects > 0) {
             // Left Child Decisions
             if (numObjects > 1 && depth <= SphereDepth) {
                 // Recursion
                 if (list1.Count > 0 && depth < SphereDepth) {
-                    CreateBVH_Spheres(newBounds[0], list1, depth + 1, index - (SphereDepth - depth));
+                    CreateBVH(newBounds[0], list1, depth + 1, index*2 + 1);
                 } else if (list1.Count > 1) {
                     // DEBUG Message for now, will figure out how to handle better later !!!!!
                     Debug.Log("<WARNING> Overlapping bounds left some spheres out of BVH Tree");
                 }
             }
 
-            // Catch up BVH with empty nodes
-            /*
-            while (SphereBVH.Count < index) {
-                newNode = new BVHNode();
-                newNode.index = -1;
-
-                SphereBVH.Add(newNode);
-                Debug.Log("!!!!! Empty Node Inserted");
-            } //*/
-
-            // Node Addition
-            newNode = new BVHNode();
-            newNode.vmin = parent.min;
-            newNode.vmax = parent.max;
-            newNode.index = -1;
-
-            if (numObjects == 1 || (numObjects >= 1 && depth >= SphereDepth)) {
-                newNode.index = _spheres.FindIndex(x => (x == spheres[0]));
-            }
-
-            SphereBVH.Add(newNode);
-
             // Right Child Decisions
             if (numObjects > 1 && depth <= SphereDepth) {
                 // Recursion
                 if (list2.Count > 0 && depth < SphereDepth) {
-                    CreateBVH_Spheres(newBounds[1], list2, depth + 1, index + (SphereDepth - depth));
+                    CreateBVH(newBounds[1], list2, depth + 1, index*2 + 2);
                 } else if (list2.Count > 1) {
                     // DEBUG Message for now, will figure out how to handle better later !!!!!
                     Debug.Log("<WARNING> Overlapping bounds left some spheres out of BVH Tree");
                 }
             }
+
+            // Node Self Addition
+            BVHNode node = new BVHNode();
+            node.vmin = parent.min;
+            node.vmax = parent.max;
+            node.index = -1;
+
+            if (numObjects == 1 || (numObjects >= 1 && depth >= SphereDepth)) {
+                node.index = _spheres.FindIndex(x => (x == spheres[0]));
+            }
+
+            SphereBVH.RemoveAt(index);
+            SphereBVH.Insert(index, node);
+        }
+    }
+
+    /// PrepareBVHList(): Prepare BVH list to be used with empty nodes ///
+    private void PrepareBVHList(List<BVHNode> list, int length) {
+        for (int i = 0; i < length; i++) {
+            list.Add(new BVHNode() { 
+                vmin = new Vector3(0.0f, 0.0f, 0.0f),
+                vmax = new Vector3(0.0f, 0.0f, 0.0f),
+                index = -1
+            });
+        }
+    }
+
+    /// TrimBVHList(): Trim empty nodes off the end of the list ///
+    private void TrimBVHList(List<BVHNode> list) {
+        int i = list.Count - 1;
+
+        while(i > 0 && list[i].index < 0) {
+            list.RemoveAt(i);
+            i--;
         }
     }
 
     /// RebuildTrees(): Rebuild Bounding Volume Tree for Ray Trace Objects ///
     private void RebuildTrees(Bounds[] rootBounds) {
-        // Mesh Tree Rebuilding
+        // Mesh BVH Tree Rebuilding
         MeshDepth = Mathf.CeilToInt(Mathf.Log(_meshObjects.Count)) + 1;
         int MeshLength = (int) Mathf.Round(Mathf.Pow(2.0f, (float) MeshDepth)) - 1;
-        CreateBVH_MeshObjects(rootBounds[0], _meshObjects, 1, (int) ((MeshLength - 1) / 2.0f));
+        PrepareBVHList(MeshBVH, MeshLength);
+        CreateBVH(rootBounds[0], _meshObjects, 1);
+        TrimBVHList(MeshBVH);
 
         // Sphere BVH Tree Rebuilding
         SphereDepth = Mathf.CeilToInt(Mathf.Log(_spheres.Count)) + 1;
         int SphereLength = (int) Mathf.Round(Mathf.Pow(2.0f, (float) SphereDepth)) - 1;
-        CreateBVH_Spheres(rootBounds[1], _spheres, 1, (int) ((SphereLength - 1) / 2.0f));
+        PrepareBVHList(SphereBVH, SphereLength);
+        CreateBVH(rootBounds[1], _spheres, 1);
+        TrimBVHList(SphereBVH);
 
         // Debug Reporting
         if (DEBUG) {
-            Debug.Log("[MESH OBJECTS] Depth: " + MeshDepth + ", Calculated Length: " + MeshLength + ", Real Length: " + MeshBVH.Count);
-            Debug.Log("[SPHERES] Depth: " + SphereDepth + ", Calculated Length: " + SphereLength + ", Real Length: " + SphereBVH.Count);
+            Debug.Log("[MESH OBJECTS] Depth: " + MeshDepth + ", Expected Length: " + MeshLength + ", Real Length: " + MeshBVH.Count);
+            Debug.Log("[SPHERES] Depth: " + SphereDepth + ", Expected Length: " + SphereLength + ", Real Length: " + SphereBVH.Count);
         }
 
         // Update Computer buffers
@@ -662,9 +669,9 @@ public class RayTraceMaster : MonoBehaviour {
 
         RayTraceShader.SetInt("_numBounces", numBounces);
         RayTraceShader.SetInt("_numRays", numRays);
-        
-        RayTraceShader.SetInt("_meshDepth", MeshDepth);
-        RayTraceShader.SetInt("_sphereDepth", SphereDepth);
+
+        RayTraceShader.SetInt("_MeshBVH_len", MeshBVH.Count);
+        RayTraceShader.SetInt("_SphereBVH_len", SphereBVH.Count);
 
 
         SetComputeBuffer("_MeshObjects", _meshObjectBuffer);
@@ -777,7 +784,7 @@ public class RayTraceMaster : MonoBehaviour {
     }
 
     /// GizmosDrawTree(): Debug Tree Drawing ///
-    private void GizmosDrawTree(List<BVHNode> list, int index, int depth, Color col, float colChange) {
+    private void GizmosDrawTree(List<BVHNode> list, int depth, Color col, float colChange, int index = 0) {
         if (depth > 0) {
             // Get node
             BVHNode node = list[index];
@@ -793,15 +800,15 @@ public class RayTraceMaster : MonoBehaviour {
 
             // Recursion downwards
             int step = (int) Mathf.Floor(Mathf.Pow(2, depth - 2));
-            GizmosDrawTree(list, index - step, depth - 1, new Color(col.r + colChange, col.g - colChange, col.b - colChange), colChange);
-            GizmosDrawTree(list, index + step, depth - 1, new Color(col.r + colChange, col.g - colChange, col.b - colChange), colChange);
+            GizmosDrawTree(list, depth - 1, new Color(col.r + colChange, col.g - colChange, col.b - colChange), colChange, index*2 + 1);
+            GizmosDrawTree(list, depth - 1, new Color(col.r + colChange, col.g - colChange, col.b - colChange), colChange, index*2 + 2);
         }
     }
 
     /// OnDrawGizmos(): Debug Drawing ///
     void OnDrawGizmos() {
         // Drawing BVH Trees
-        GizmosDrawTree(SphereBVH, (SphereBVH.Count - 1) / 2, SphereDepth, new Color(0.0f, 0.0f, 1.0f), 1.0f / SphereDepth);
-        GizmosDrawTree(MeshBVH, (MeshBVH.Count - 1) / 2, MeshDepth, new Color(0.0f, 1.0f, 0.0f), 1.0f / MeshDepth);
+        GizmosDrawTree(SphereBVH, SphereDepth, new Color(0.0f, 0.0f, 1.0f), 1.0f / SphereDepth);
+        GizmosDrawTree(MeshBVH, MeshDepth, new Color(0.0f, 1.0f, 0.0f), 1.0f / MeshDepth);
     }
 }
