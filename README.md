@@ -10,10 +10,8 @@ This is a small first time attempt at ray tracing through compute shaders in Uni
 
 ## Known Issues
  - Bounding Volume Heirarchy not very effective \(likely due to problems below\)
- - Bounding volumes incorrect for some rotated mesh objects.
- - Mesh objects sometimes left out of bounding volume heirarchy by accident.
  - Leaf bounds don't exclude object intersection tests.
- - Heirarchy does not adapt well to odd numbers of objects in a scene and/or scenes with overlapping objects.
+ - Heirarchy does not account for objects with overlapping bounds.
 
 ## Sources/Guides:
  - Basic Setup: [Ray Tracing Blog](http://blog.three-eyed-games.com/2018/05/03/gpu-ray-tracing-in-unity-part-1/)
