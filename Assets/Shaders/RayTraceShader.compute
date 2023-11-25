@@ -268,8 +268,8 @@ bool IntersectBVHNode(Ray ray, BVHNode node) {
 
     [unroll]
     for (int i = 0; i < 3; i++) { // 0 - x, 1 - y, 2 - z
-        t1 = (node.vmin[0] - ray.origin[0]) / (ray.direction[0] + EPSILON);
-        t2 = (node.vmin[0] - ray.origin[0]) / (ray.direction[0] - EPSILON);
+        t1 = (node.vmin[i] - ray.origin[i]) / (ray.direction[i] + EPSILON);
+        t2 = (node.vmax[i] - ray.origin[i]) / (ray.direction[i] + EPSILON);
 
         t_min = max(t_min, min(t1, t2));
         t_max = min(t_max, max(t1, t2));
