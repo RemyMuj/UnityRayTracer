@@ -1,5 +1,4 @@
 #pragma kernel CSMain
-#pragma 
 
 /// Parameters ///
 RWTexture2D<float4> Result;
@@ -12,6 +11,7 @@ SamplerState sampler_SkyboxTexture;
 
 static const float PI = 3.14159265f;
 static const float EPSILON = 1e-8;
+static const float FLOAT_MAX = 3.402823466e+38f;
 float2 _Pixel;
 float _Seed;
 
@@ -261,80 +261,75 @@ void IntersectMeshObject(Ray ray, inout RayHit bestHit, MeshObject meshObject) {
 
 /// IntersectBVHNode(): Axis-Aligned Bounding Box intersection test (for using binary volume search) ///
 bool IntersectBVHNode(Ray ray, BVHNode node) {
-    // Calculate times to cross extent boundaries
-    float2 t_x, t_y, t_z;
-    t_x[0] = (node.vmin[0] - ray.origin[0]) / (ray.direction[0] - (EPSILON * sign(node.vmin[0] - ray.origin[0])));
-    t_x[1] = (node.vmax[0] - ray.origin[0]) / (ray.direction[0] + (EPSILON * sign(node.vmax[0] - ray.origin[0])));
+    // Calculate mutual time range to cross extent boundaries
+    float t_min = -FLOAT_MAX;
+    float t_max = FLOAT_MAX;
+    float t1, t2;
 
-    t_y[0] = (node.vmin[1] - ray.origin[1]) / (ray.direction[1] - (EPSILON * sign(node.vmin[1] - ray.origin[1])));
-    t_y[1] = (node.vmax[1] - ray.origin[1]) / (ray.direction[1] + (EPSILON * sign(node.vmax[1] - ray.origin[1])));
+    [unroll]
+    for (int i = 0; i < 3; i++) { // 0 - x, 1 - y, 2 - z
+        t1 = (node.vmin[0] - ray.origin[0]) / (ray.direction[0] + EPSILON);
+        t2 = (node.vmin[0] - ray.origin[0]) / (ray.direction[0] - EPSILON);
 
-    t_z[0] = (node.vmin[2] - ray.origin[2]) / (ray.direction[2] - (EPSILON * sign(node.vmin[2] - ray.origin[2])));
-    t_z[1] = (node.vmax[2] - ray.origin[2]) / (ray.direction[2] + (EPSILON * sign(node.vmax[2] - ray.origin[2])));
+        t_min = max(t_min, min(t1, t2));
+        t_max = min(t_max, max(t1, t2));
+    }
 
-    // Find tightest time range
-    float t_min = min(min(t_x[0], t_y[0]), t_z[0]);
-    float t_max = max(max(t_x[1], t_y[1]), t_z[1]);
-    
     // Return
-    return (t_min <= t_max);
+    return (t_max >= t_min);
 }
 
-/// IntersectMeshBVH(): Binary intersection search through MeshBVH /// [WIP] Should be rewritten in more GPU friendly form to not time out GPU !!!!!!
+/// IntersectMeshBVH(): Binary intersection search through MeshBVH ///
 void IntersectMeshBVH(Ray ray, inout RayHit bestHit) {
-    // Set up array to mark validity with
-    bool valid[_MeshBVH_len];
-    valid[0] = true;
+    // Set up array to put node indices to check
+    int nodes[_MeshBVH_len + 1];
+    nodes[0] = 0;
 
-    // Tree Traversal (mark unneeded checks by placing true in validity)
-    [loop]
-    for (int i = 0; i < _MeshBVH_len; i++) {
-        if (valid[i] && IntersectBVHNode(ray, _MeshBVH[i])) {
-            // Do final intersection test if at leaf
-            if (_MeshBVH[i].index >= 0) {
-                IntersectMeshObject(ray, bestHit, _MeshObjects[_MeshBVH[i].index]);
-            }
+    // Set up checking index
+    int check = 1;
+   
+    // Tree Traversal
+    while (check > 0) {
+        check--;
+        int BVHIndex = nodes[check];
+        BVHNode node = _MeshBVH[BVHIndex];
 
-            // Mark children to be checked
-            if (i*2 + 2 < _MeshBVH_len) {
-                valid[i*2 + 1] = true;
-                valid[i*2 + 2] = true;
-            }
-        } else {
-            // Mark children to be skipped
-            if (i*2 + 2 < _MeshBVH_len) {
-                valid[i*2 + 1] = false;
-                valid[i*2 + 2] = false;
+        if (IntersectBVHNode(ray, node)) {
+            if (node.index < 0) {
+                // Parent node so add child indices to check next
+                nodes[check++] = BVHIndex*2 + 1;
+                nodes[check++] = BVHIndex*2 + 2;
+            } else {
+                // Leaf node so intersect mesh inside
+                IntersectMeshObject(ray, bestHit, _MeshObjects[node.index]);
             }
         }
     }
 }
 
-/// IntersectSphereBVH(): Binary intersection search through SphereBVH /// [WIP] Should be rewritten in more GPU friendly form to not time out GPU !!!!!!
+/// IntersectSphereBVH(): Binary intersection search through SphereBVH ///
 void IntersectSphereBVH(Ray ray, inout RayHit bestHit) {
-    // Set up array to mark validity with
-    bool valid[_SphereBVH_len];
-    valid[0] = true;
+    // Set up array to put node indices to check
+    int nodes[_SphereBVH_len + 1];
+    nodes[0] = 0;
 
-    // Tree Traversal (mark unneeded checks by placing true in validity)
-    [loop]
-    for (int i = 0; i < _SphereBVH_len; i++) {
-        if (valid[i] && IntersectBVHNode(ray, _SphereBVH[i])) {
-            // Do final intersection test if at leaf
-            if (_SphereBVH[i].index >= 0) {
-                IntersectSphere(ray, bestHit, _Spheres[_SphereBVH[i].index]);
-            }
+    // Set up checking index
+    int check = 1;
+   
+    // Tree Traversal
+    while (check > 0) {
+        check--;
+        int BVHIndex = nodes[check];
+        BVHNode node = _SphereBVH[BVHIndex];
 
-            // Mark children to be checked
-            if (i*2 + 2 < _SphereBVH_len) {
-                valid[i*2 + 1] = true;
-                valid[i*2 + 2] = true;
-            }
-        } else {
-            // Mark children to be skipped
-            if (i*2 + 2 < _SphereBVH_len) {
-                valid[i*2 + 1] = false;
-                valid[i*2 + 2] = false;
+        if (IntersectBVHNode(ray, node)) {
+            if (node.index < 0) {
+                // Parent node so add child indices to check next
+                nodes[check++] = BVHIndex*2 + 1;
+                nodes[check++] = BVHIndex*2 + 2;
+            } else {
+                // Leaf node so intersect sphere inside
+                IntersectSphere(ray, bestHit, _Spheres[node.index]);
             }
         }
     }
@@ -343,16 +338,13 @@ void IntersectSphereBVH(Ray ray, inout RayHit bestHit) {
 /// Trace() ///
 RayHit Trace(Ray ray) {
     // Setup variables
-    uint count, stride, i;
     RayHit bestHit = CreateRayHit();
     
-    // Trace Ground
+    // Trace Ground & Skybox
     IntersectGroundPlane(ray, bestHit);
 
-    // Trace Spheres
+    // Trace Primitives
     IntersectSphereBVH(ray, bestHit);
-
-    // Trace Mesh Objects
     IntersectMeshBVH(ray, bestHit);
 
     // Final Return
