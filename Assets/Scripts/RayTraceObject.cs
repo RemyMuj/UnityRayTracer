@@ -22,6 +22,7 @@ public class RayTraceObject : MonoBehaviour {
     private void OnEnable() {
         // setup General Properties
         bounds = GetComponent<Collider>().bounds;
+        
 
         // Setup Properties based on type of Ray Trace Object        
         if (GetComponent<SphereCollider>() != null) {
@@ -34,6 +35,7 @@ public class RayTraceObject : MonoBehaviour {
         } else {
             // Setup Mesh Properties
             gameObject.layer = LayerMask.NameToLayer("RayTrace_mesh");
+            bounds = GetComponent<MeshRenderer>().bounds;
         }
 
         // Register self

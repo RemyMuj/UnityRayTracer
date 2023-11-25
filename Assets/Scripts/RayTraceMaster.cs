@@ -333,15 +333,17 @@ public class RayTraceMaster : MonoBehaviour {
         return return_array;
     }
 
-    /// ComputeCenter(MeshObjects): Compute center of all mesh objects in bounding box /// [WIP] ========================================================== ! ! ! ! !
+    /// ComputeCenter(MeshObjects): Compute center of all mesh objects in bounding box ///
     private Vector3 ComputeCenter(List<MeshObject> meshObjects) {
         // Variables
         Vector3 avePoint = new Vector3();
         float numPoints = 0.0f;
+        int lastIndex;
 
         // Adding Coordinates
         foreach (MeshObject obj in meshObjects) {
-            for (int i = obj.indices_offset; i < obj.indices_count; i++) {
+            lastIndex = obj.indices_count + obj.indices_offset;
+            for (int i = obj.indices_offset; i < lastIndex; i++) {
                 avePoint += _vertices[i];
                 numPoints++;
             }
