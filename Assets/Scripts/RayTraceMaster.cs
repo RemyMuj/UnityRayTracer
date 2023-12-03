@@ -815,7 +815,7 @@ public class RayTraceMaster : MonoBehaviour {
     /// OnDrawGizmos(): Debug Drawing ///
     void OnDrawGizmos() {
         // Drawing BVH Trees
-        GizmosDrawTree(SphereBVH, SphereDepth, new Color(0.0f, 0.0f, 1.0f), 1.0f / SphereDepth);
-        GizmosDrawTree(MeshBVH, MeshDepth, new Color(0.0f, 1.0f, 0.0f), 1.0f / MeshDepth);
+        GizmosDrawTree(SphereBVH, SphereDepth, new Color(0.0f, 0.0f, 1.0f), 1.0f / SphereDepth); // Draw Sphere BVH
+        GizmosDrawTree(MeshBVH, MeshDepth, new Color(0.0f, 1.0f, 0.0f), 1.0f / MeshDepth); // Draw Mesh BVH
     }
 }

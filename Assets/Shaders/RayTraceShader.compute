@@ -281,12 +281,14 @@ bool IntersectBVHNode(Ray ray, BVHNode node) {
 
 /// IntersectMeshBVH(): Binary intersection search through MeshBVH ///
 void IntersectMeshBVH(Ray ray, inout RayHit bestHit) {
+    // *Needs to be modified in future for multiple objects in 1 node (overlaps)
     // Set up array to put node indices to check
-    int nodes[_MeshBVH_len + 1];
+    int nodes[_MeshBVH_len];
     nodes[0] = 0;
 
-    // Set up checking index
+    // Set up checking index and test amounts
     int check = 1;
+    int tests = 0;
    
     // Tree Traversal
     while (check > 0) {
@@ -294,27 +296,35 @@ void IntersectMeshBVH(Ray ray, inout RayHit bestHit) {
         int BVHIndex = nodes[check];
         BVHNode node = _MeshBVH[BVHIndex];
 
+        // AABB Handling
         if (IntersectBVHNode(ray, node)) {
             if (node.index < 0) {
                 // Parent node so add child indices to check next
                 nodes[check++] = BVHIndex*2 + 1;
                 nodes[check++] = BVHIndex*2 + 2;
             } else {
-                // Leaf node so intersect mesh inside
-                IntersectMeshObject(ray, bestHit, _MeshObjects[node.index]);
+                // Leaf node so add mesh to intersection list
+                tests++; // *
             }
+        }
+
+        // Leaf Intersection Test(s)
+        for (int i = 0; i < tests; i++) {
+            IntersectMeshObject(ray, bestHit, _MeshObjects[node.index]); // *
         }
     }
 }
 
 /// IntersectSphereBVH(): Binary intersection search through SphereBVH ///
 void IntersectSphereBVH(Ray ray, inout RayHit bestHit) {
+    // *Needs to be modified in future for multiple objects in 1 node (overlaps)
     // Set up array to put node indices to check
-    int nodes[_SphereBVH_len + 1];
+    int nodes[_SphereBVH_len];
     nodes[0] = 0;
 
-    // Set up checking index
+    // Set up checking index and test amounts
     int check = 1;
+    int tests = 0;
    
     // Tree Traversal
     while (check > 0) {
@@ -322,15 +332,21 @@ void IntersectSphereBVH(Ray ray, inout RayHit bestHit) {
         int BVHIndex = nodes[check];
         BVHNode node = _SphereBVH[BVHIndex];
 
+        // AABB Handling
         if (IntersectBVHNode(ray, node)) {
             if (node.index < 0) {
                 // Parent node so add child indices to check next
                 nodes[check++] = BVHIndex*2 + 1;
                 nodes[check++] = BVHIndex*2 + 2;
             } else {
-                // Leaf node so intersect sphere inside
-                IntersectSphere(ray, bestHit, _Spheres[node.index]);
+                // Leaf node so indicate need for intersection test(s)
+                tests++; // *
             }
+        }
+
+        // Leaf Intersection Test(s)
+        for (int i = 0; i < tests; i++) {
+            IntersectSphere(ray, bestHit, _Spheres[node.index]); // *
         }
     }
 }
