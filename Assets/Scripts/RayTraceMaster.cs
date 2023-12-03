@@ -4,14 +4,14 @@ using UnityEngine;
 
 //[ExecuteAlways, ImageEffectAllowedInSceneView]
 public class RayTraceMaster : MonoBehaviour {
-    /// Class Variables (Assigned through Inspector/Engine) ///
+    /// Class Variables ///
     public ComputeShader RayTraceShader;
     private Camera _camera;
     public Texture SkyboxTexture;
-    public bool DEBUG = true;
     private RenderTexture _target;
     private RenderTexture _converged;
     private RenderTexture _debug;
+    private int DEBUG_LEVEL = 2; // 0 - NONE, 1 - DETAILED, 2 - BASIC, 3 - WARNINGS ONLY
 
     public int numBounces = 8;
     public int numRays = 1;
@@ -400,7 +400,7 @@ public class RayTraceMaster : MonoBehaviour {
         }
 
         // Debug Report
-        if (DEBUG) {
+        if (DEBUG_LEVEL == 1) {
             int overlapCount = 0;
             for (int i = 0; i < FrontHits[hitIndex].Length; i++) {
                 if (BackHits[hitIndex].Contains(FrontHits[hitIndex][i]))
@@ -495,7 +495,7 @@ public class RayTraceMaster : MonoBehaviour {
         List<MeshObject> list2 = GetMeshObjectsInBound(newBounds[1]);
 
         // Debug Report
-        if (DEBUG) {
+        if (DEBUG_LEVEL == 1) {
             Debug.Log("[MESH OBJECTS] SplitBounds_MeshObjects() called on " + numObjects + " object(s)");
             Debug.Log(" > Child1 List Length = " + list1.Count + ", Child2 List Length = " + list2.Count);
         }
@@ -509,7 +509,9 @@ public class RayTraceMaster : MonoBehaviour {
                     CreateBVH(newBounds[0], list1, depth + 1, index*2 + 1);
                 } else if (list1.Count > 1) {
                     // DEBUG Message for now, will figure out how to handle better later !!!!!
-                    Debug.Log("<WARNING> Overlapping bounds left some mesh objects out of BVH Tree");
+                    if (DEBUG_LEVEL >= 1) {
+                        Debug.Log("<WARNING> Mesh object(s) left out of tree!");
+                    }
                 }
             }
 
@@ -520,7 +522,9 @@ public class RayTraceMaster : MonoBehaviour {
                     CreateBVH(newBounds[1], list2, depth + 1, index*2 + 2);
                 } else if (list2.Count > 1) {
                     // DEBUG Message for now, will figure out how to handle better later !!!!!
-                    Debug.Log("<WARNING> Overlapping bounds left some mesh objects out of BVH Tree");
+                    if (DEBUG_LEVEL >= 1) {
+                        Debug.Log("<WARNING>  Mesh object(s) left out of tree!");
+                    }
                 }
             }
 
@@ -550,7 +554,7 @@ public class RayTraceMaster : MonoBehaviour {
         List<Sphere> list2 = GetSpheresInBound(newBounds[1]);
 
         // Debug Report
-        if (DEBUG) {
+        if (DEBUG_LEVEL == 1) {
             Debug.Log("[SPHERES] SplitBounds_Spheres() called on " + numObjects + " object(s)");
             Debug.Log(" > Child1 List Length = " + list1.Count + ", Child2 List Length = " + list2.Count);
         }
@@ -564,7 +568,9 @@ public class RayTraceMaster : MonoBehaviour {
                     CreateBVH(newBounds[0], list1, depth + 1, index*2 + 1);
                 } else if (list1.Count > 1) {
                     // DEBUG Message for now, will figure out how to handle better later !!!!!
-                    Debug.Log("<WARNING> Overlapping bounds left some spheres out of BVH Tree");
+                    if (DEBUG_LEVEL >= 1) {
+                        Debug.Log("<WARNING> Sphere(s) left out of tree!");
+                    }
                 }
             }
 
@@ -575,7 +581,9 @@ public class RayTraceMaster : MonoBehaviour {
                     CreateBVH(newBounds[1], list2, depth + 1, index*2 + 2);
                 } else if (list2.Count > 1) {
                     // DEBUG Message for now, will figure out how to handle better later !!!!!
-                    Debug.Log("<WARNING> Overlapping bounds left some spheres out of BVH Tree");
+                    if (DEBUG_LEVEL >= 1) {
+                        Debug.Log("<WARNING> Sphere(s) left out of tree!");
+                    }
                 }
             }
 
@@ -632,7 +640,7 @@ public class RayTraceMaster : MonoBehaviour {
         TrimBVHList(SphereBVH);
 
         // Debug Reporting
-        if (DEBUG) {
+        if (DEBUG_LEVEL == 1 || DEBUG_LEVEL == 2) {
             Debug.Log("[MESH OBJECTS] Depth: " + MeshDepth + ", Expected Length: " + MeshLength + ", Real Length: " + MeshBVH.Count);
             Debug.Log("[SPHERES] Depth: " + SphereDepth + ", Expected Length: " + SphereLength + ", Real Length: " + SphereBVH.Count);
         }
