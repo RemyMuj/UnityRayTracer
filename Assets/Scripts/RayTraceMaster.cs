@@ -13,7 +13,7 @@ public class RayTraceMaster : MonoBehaviour {
     private RenderTexture _debug;
     private int DEBUG_LEVEL = 2; // 0 - NONE, 1 - DETAILED, 2 - BASIC, 3 - WARNINGS ONLY
 
-    public int numBounces = 8;
+    public int numBounces = 8; 
     public int numRays = 1;
     private uint _currentSample = 0;
     private Material _additionMaterial;
@@ -25,6 +25,7 @@ public class RayTraceMaster : MonoBehaviour {
     private static List<MeshObject> _meshObjects = new List<MeshObject>();
     private static List<Vector3> _vertices = new List<Vector3>();
     private static List<int> _indices = new List<int>();
+    private static List<Vector3> _normals = new List<Vector3>();
 
     private static List<Sphere> _spheres = new List<Sphere>();
     
@@ -34,6 +35,8 @@ public class RayTraceMaster : MonoBehaviour {
     private ComputeBuffer _sphereBuffer;
     private ComputeBuffer _meshObjectBVHBuffer;
     private ComputeBuffer _sphereBVHBuffer;
+
+    private ComputeBuffer _normalBuffer;
 
     private static int RayTraceParamsStructSize = 40;
     private static int MeshObjectStructSize = 72 + RayTraceParamsStructSize;
@@ -169,6 +172,7 @@ public class RayTraceMaster : MonoBehaviour {
             _meshObjectBuffer.Release();
             _vertexBuffer.Release();
             _indexBuffer.Release();
+            _normalBuffer.Release();
         }
 
         if (_sphereBVHBuffer != null) {
@@ -234,6 +238,7 @@ public class RayTraceMaster : MonoBehaviour {
         _meshObjects.Clear();
         _vertices.Clear();
         _indices.Clear();
+        _normals.Clear();
         _spheres.Clear();
 
         // Setup New Scene bounds
@@ -281,6 +286,7 @@ public class RayTraceMaster : MonoBehaviour {
                     int firstIndex = _indices.Count;
                     var indices = mesh.GetIndices(0);
                     _indices.AddRange(indices.Select(index => index + firstVertex));
+                    _normals.AddRange(ComputeNormals(indices.Select(index => index + firstVertex).ToArray()));
 
                     // Add Lighting Parameters
                     _lighting.color_albedo = new Vector3(obj.albedoColor.r, obj.albedoColor.g, obj.albedoColor.b);
@@ -333,7 +339,55 @@ public class RayTraceMaster : MonoBehaviour {
         return return_array;
     }
 
-    /// ComputeCenter(MeshObjects): Compute center of all mesh objects in bounding box ///
+    /// GetIndexList(List<T>)
+    /*
+    private List<int> GetIndexList(Vector3[] array, Vector3 vec) {
+        List<int> indices = new List<int>();
+
+        for (int index = 0; index < array.Length; index++) {
+            if (array[index] == vec) {
+                indices.Add(index - index % 3);
+            }
+        }
+
+        return indices;
+    }//*/
+
+    /// ComputeNormals(Mesh, Vertex): Compute the normals associated with the vertices of a mesh ///
+    private List<Vector3> ComputeNormals(int[] indices) {
+        // Variables
+        List<Vector3> normals = new List<Vector3>();
+
+        Debug.Log("Indices Length: " + indices.Length);
+        Debug.Log("Indices[0]: " + indices[0]);
+        Debug.Log("Indices[end]: " + indices[indices.Length - 1]);
+
+        // Calculate normals for every vertex
+        for (int i = 0; i < indices.Length; i++) {
+            // Setup normal vector
+            Vector3 vec = new Vector3(0.0f, 0.0f, 0.0f);
+
+            // Find base indices for triangles that share this vertex
+            int[] nearby = indices.Where(index => _vertices[index] == _vertices[_indices[i]]).ToArray();
+
+            // Add normals from all touching triangles
+            for (int j = 0; j < nearby.Length; j++) {
+                // Correct index to use first vertex of triangle
+                int start = nearby[j] - (nearby[j] % 3);
+
+                // Calculate cross product between two edges to get triangle normal
+                vec += Vector3.Cross(_vertices[indices[start + 1]] - _vertices[indices[start]], _vertices[indices[start + 2]] - _vertices[indices[start]]);
+            }
+             
+            // Add averaged normal vector to list
+            normals.Add(Vector3.Normalize(vec));
+        }
+
+        // Return list of normals
+        return normals;
+    }
+
+    /// ComputeCenter(MeshObjects): Compute Ideal Splitting Center of all mesh objects in bounding box ///
     private Vector3 ComputeCenter(List<MeshObject> meshObjects) {
         // Variables
         Vector3 avePoint = new Vector3();
@@ -649,6 +703,7 @@ public class RayTraceMaster : MonoBehaviour {
         CreateComputeBuffer(ref _meshObjectBuffer, _meshObjects, MeshObjectStructSize);
         CreateComputeBuffer(ref _vertexBuffer, _vertices, 12);
         CreateComputeBuffer(ref _indexBuffer, _indices, 4);
+        CreateComputeBuffer(ref _normalBuffer, _normals, 12);
         CreateComputeBuffer(ref _sphereBuffer, _spheres, SphereStructSize);
 
         CreateComputeBuffer(ref _meshObjectBVHBuffer, MeshBVH, BVHNodeSize);
@@ -692,6 +747,7 @@ public class RayTraceMaster : MonoBehaviour {
         SetComputeBuffer("_MeshObjects", _meshObjectBuffer);
         SetComputeBuffer("_Vertices", _vertexBuffer);
         SetComputeBuffer("_Indices", _indexBuffer);
+        SetComputeBuffer("_Normals", _normalBuffer);
         SetComputeBuffer("_Spheres", _sphereBuffer);
 
         SetComputeBuffer("_MeshBVH", _meshObjectBVHBuffer);
@@ -825,5 +881,15 @@ public class RayTraceMaster : MonoBehaviour {
         // Drawing BVH Trees
         GizmosDrawTree(SphereBVH, SphereDepth, new Color(0.0f, 0.0f, 1.0f), 1.0f / SphereDepth); // Draw Sphere BVH
         GizmosDrawTree(MeshBVH, MeshDepth, new Color(0.0f, 1.0f, 0.0f), 1.0f / MeshDepth); // Draw Mesh BVH
+
+        // Draw Calculated Normals
+        foreach (MeshObject mesh in _meshObjects) {
+            for (int i = mesh.indices_offset; i < mesh.indices_offset + mesh.indices_count; i++) {
+                Gizmos.color = Color.white;
+                Gizmos.DrawSphere(mesh.localToWorldMatrix.MultiplyPoint3x4(_vertices[_indices[i]]), 0.005f);
+                Gizmos.color = Color.blue;
+                Gizmos.DrawLine(mesh.localToWorldMatrix.MultiplyPoint3x4(_vertices[_indices[i]]), mesh.localToWorldMatrix.MultiplyPoint3x4(_vertices[_indices[i]] + _normals[_indices[i]] * 0.1f));
+            }
+        }
     }
 }

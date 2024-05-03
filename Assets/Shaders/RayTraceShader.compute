@@ -64,6 +64,7 @@ struct BVHNode {
 StructuredBuffer<MeshObject> _MeshObjects;
 StructuredBuffer<float3> _Vertices;
 StructuredBuffer<int> _Indices;
+StructuredBuffer<float3> _Normals;
 StructuredBuffer<Sphere> _Spheres;
 
 StructuredBuffer<BVHNode> _MeshBVH;
