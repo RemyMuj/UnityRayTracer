@@ -286,7 +286,6 @@ public class RayTraceMaster : MonoBehaviour {
                     int firstIndex = _indices.Count;
                     var indices = mesh.GetIndices(0);
                     _indices.AddRange(indices.Select(index => index + firstVertex));
-                    _normals.AddRange(ComputeNormals(indices.Select(index => index + firstVertex).ToArray()));
 
                     // Add Lighting Parameters
                     _lighting.color_albedo = new Vector3(obj.albedoColor.r, obj.albedoColor.g, obj.albedoColor.b);
@@ -306,6 +305,18 @@ public class RayTraceMaster : MonoBehaviour {
                     _rayTraceObjectIndices.Add(_meshObjects.Count - 1);
                     break;
             }
+        }
+
+        // Calculate all normal vectors
+        _normals.AddRange(ComputeNormals().ToArray());
+
+        // Debug Report
+        if (DEBUG_LEVEL == 1 || DEBUG_LEVEL == 2) {
+            Debug.Log("# of Spheres: " + _spheres.Count);
+            Debug.Log("# of Mesh Objects: " + _meshObjects.Count);
+            Debug.Log("# of Vertices: " + _vertices.Count);
+            Debug.Log("# of Indices: " + _indices.Count);
+            Debug.Log("# of Normals: " + _normals.Count);
         }
 
         // Encapsulate Bounds
@@ -339,44 +350,27 @@ public class RayTraceMaster : MonoBehaviour {
         return return_array;
     }
 
-    /// GetIndexList(List<T>)
-    /*
-    private List<int> GetIndexList(Vector3[] array, Vector3 vec) {
-        List<int> indices = new List<int>();
-
-        for (int index = 0; index < array.Length; index++) {
-            if (array[index] == vec) {
-                indices.Add(index - index % 3);
-            }
-        }
-
-        return indices;
-    }//*/
-
     /// ComputeNormals(Mesh, Vertex): Compute the normals associated with the vertices of a mesh ///
-    private List<Vector3> ComputeNormals(int[] indices) {
+    private List<Vector3> ComputeNormals() {
         // Variables
         List<Vector3> normals = new List<Vector3>();
 
-        Debug.Log("Indices Length: " + indices.Length);
-        Debug.Log("Indices[0]: " + indices[0]);
-        Debug.Log("Indices[end]: " + indices[indices.Length - 1]);
-
         // Calculate normals for every vertex
-        for (int i = 0; i < indices.Length; i++) {
+        for (int i = 0; i < _vertices.Count; i++) {
             // Setup normal vector
             Vector3 vec = new Vector3(0.0f, 0.0f, 0.0f);
 
             // Find base indices for triangles that share this vertex
-            int[] nearby = indices.Where(index => _vertices[index] == _vertices[_indices[i]]).ToArray();
+            var query = _indices.Select((int vecIndex, int listIndex) => new {vec = vecIndex, ind = listIndex});
+            query = query.Where(indexPair => indexPair.vec == i);
 
             // Add normals from all touching triangles
-            for (int j = 0; j < nearby.Length; j++) {
-                // Correct index to use first vertex of triangle
-                int start = nearby[j] - (nearby[j] % 3);
+            foreach (var obj in query) {
+                // Correct to first vector in triangle set
+                int start = obj.ind - (obj.ind % 3);
 
                 // Calculate cross product between two edges to get triangle normal
-                vec += Vector3.Cross(_vertices[indices[start + 1]] - _vertices[indices[start]], _vertices[indices[start + 2]] - _vertices[indices[start]]);
+                vec += Vector3.Cross(_vertices[_indices[start + 1]] - _vertices[_indices[start]], _vertices[_indices[start + 2]] - _vertices[_indices[start]]);
             }
              
             // Add averaged normal vector to list
