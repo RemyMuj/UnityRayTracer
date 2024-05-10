@@ -245,15 +245,15 @@ void IntersectMeshObject(Ray ray, inout RayHit bestHit, MeshObject meshObject) {
     for (uint i = offset; i < count; i += 3) {
         float3 v0 = (mul(meshObject.localToWorldMatrix, float4(_Vertices[_Indices[i]], 1))).xyz;
         float3 v1 = (mul(meshObject.localToWorldMatrix, float4(_Vertices[_Indices[i + 1]], 1))).xyz;
-        /// ERROR HERE PROBABLY IN NOT PASSING PROPER VALUES FROM BUFFER !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         float3 v2 = (mul(meshObject.localToWorldMatrix, float4(_Vertices[_Indices[i + 2]], 1))).xyz;
         float t, u, v;
 
         if (IntersectTriangle_MT97(ray, v0, v1, v2, t, u, v)) {
             if (t > 0 && t < bestHit.distance) {
                 bestHit.distance = t;
-                bestHit.position = ray.origin + t * ray.direction;
-                bestHit.normal = normalize(cross(v1 - v0, v2 - v0));
+                bestHit.position = ray.origin + t * ray.direction; 
+                // Calculate normal from blending with barycentric coordinates (u, v, w = 1 - u - v)
+                bestHit.normal = (_Normals[_Indices[i]] * (1.0f - u - v)) + (_Normals[_Indices[i + 1]] * u) + (_Normals[_Indices[i + 2]] * v);
                 bestHit.lighting = meshObject.lighting;
             }
         }
