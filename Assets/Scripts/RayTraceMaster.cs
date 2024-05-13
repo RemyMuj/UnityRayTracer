@@ -11,6 +11,7 @@ public class RayTraceMaster : MonoBehaviour {
     private RenderTexture _target;
     private RenderTexture _converged;
     private RenderTexture _debug;
+    private const float EPSILON = float.Epsilon * 3;
     private int DEBUG_LEVEL = 2; // 0 - NONE, 1 - DETAILED, 2 - BASIC, 3 - WARNINGS ONLY
 
     public int numBounces = 8; 
@@ -362,7 +363,7 @@ public class RayTraceMaster : MonoBehaviour {
 
             // Find base indices for triangles that share this vertex
             var query = _indices.Select((int vecIndex, int listIndex) => new {vec = vecIndex, ind = listIndex});
-            query = query.Where(indexPair => indexPair.vec == i);
+            query = query.Where(indexPair => (_vertices[indexPair.vec] - _vertices[i]).sqrMagnitude <= EPSILON);
 
             // Add normals from all touching triangles
             foreach (var obj in query) {
