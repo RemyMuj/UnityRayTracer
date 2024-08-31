@@ -12,7 +12,7 @@ public class RayTraceMaster : MonoBehaviour {
     private RenderTexture _converged;
     private RenderTexture _debug;
     private const float EPSILON = float.Epsilon * 3;
-    private int DEBUG_LEVEL = 2; // 0 - NONE, 1 - DETAILED, 2 - BASIC, 3 - WARNINGS ONLY
+    private RayTraceDebug rayDebug;
 
     public int numBounces = 8; 
     public int numRays = 1;
@@ -312,13 +312,11 @@ public class RayTraceMaster : MonoBehaviour {
         _normals.AddRange(ComputeNormals().ToArray());
 
         // Debug Report
-        if (DEBUG_LEVEL == 1 || DEBUG_LEVEL == 2) {
-            Debug.Log("# of Spheres: " + _spheres.Count);
-            Debug.Log("# of Mesh Objects: " + _meshObjects.Count);
-            Debug.Log("# of Vertices: " + _vertices.Count);
-            Debug.Log("# of Indices: " + _indices.Count);
-            Debug.Log("# of Normals: " + _normals.Count);
-        }
+        rayDebug.Log("# of Spheres: " + _spheres.Count, 2);
+        rayDebug.Log("# of Mesh Objects: " + _meshObjects.Count, 2);
+        rayDebug.Log("# of Vertices: " + _vertices.Count, 2);
+        rayDebug.Log("# of Indices: " + _indices.Count, 2);
+        rayDebug.Log("# of Normals: " + _normals.Count, 2);
 
         // Encapsulate Bounds
         Bounds[] return_array = new Bounds[2];
@@ -352,6 +350,7 @@ public class RayTraceMaster : MonoBehaviour {
     }
 
     /// ComputeNormals(Mesh, Vertex): Compute the normals associated with the vertices of a mesh ///
+    /* Normals s.t. |Normals| = |Vertices| //*/
     private List<Vector3> ComputeNormals() {
         // Variables
         List<Vector3> normals = new List<Vector3>();
@@ -380,9 +379,41 @@ public class RayTraceMaster : MonoBehaviour {
 
         // Return list of normals
         return normals;
-    }
+    }//*/
 
-    /// ComputeCenter(MeshObjects): Compute Ideal Splitting Center of all mesh objects in bounding box ///
+    /// ComputeNormals(Mesh, Vertex): Compute the normals associated with the indices of a mesh ///
+    /* Normals s.t. |Normals| = |Indices| //*
+    private List<Vector3> ComputeNormals() {
+        // Variables
+        List<Vector3> normals = new List<Vector3>();
+
+        // Calculate normals for every vertex
+        for (int i = 0; i < _indices.Count; i++) {
+            // Setup normal vector
+            Vector3 vec = new Vector3(0.0f, 0.0f, 0.0f);
+
+            // Find base indices for triangles that share this vertex
+            var query = _indices.Select((int vecIndex, int listIndex) => new {vec = vecIndex, ind = listIndex});
+            query = query.Where(indexPair => (_vertices[indexPair.vec] - _vertices[i]).sqrMagnitude <= EPSILON);
+
+            // Add normals from all touching triangles
+            foreach (var obj in query) {
+                // Correct to first vector in triangle set
+                int start = obj.ind - (obj.ind % 3);
+
+                // Calculate cross product between two edges to get triangle normal
+                vec += Vector3.Cross(_vertices[_indices[start + 1]] - _vertices[_indices[start]], _vertices[_indices[start + 2]] - _vertices[_indices[start]]);
+            }
+             
+            // Add averaged normal vector to list
+            normals.Add(Vector3.Normalize(vec));
+        }
+
+        // Return list of normals
+        return normals;
+    }//*/
+
+    /// ComputeCenter(MeshObjects): Compute ideal splitting center of all mesh objects in bounding box ///
     private Vector3 ComputeCenter(List<MeshObject> meshObjects) {
         // Variables
         Vector3 avePoint = new Vector3();
@@ -407,16 +438,23 @@ public class RayTraceMaster : MonoBehaviour {
         return avePoint / numPoints;
     }
     
-    /// ComputeCenter(Spheres): Compute center of all spheres in bounding box ///
+    /// ComputeCenter(Spheres): Compute ideal splitting center of all spheres in bounding box ///
     private Vector3 ComputeCenter(List<Sphere> spheres) {
         // Variables
         Vector3 avePoint = new Vector3(0.0f, 0.0f, 0.0f);
-        float numPoints = (float) spheres.Count;
+        Vector3 boundVec = (1.0f / Mathf.Sqrt(2.0f)) * (new Vector3(1.0f, 1.0f, 1.0f));
+        float numPoints = (float) spheres.Count;// * 2.0f;
 
         // Adding Coordinates
+        //*
         foreach (Sphere s in spheres) {
             avePoint += s.position;
-        }
+        }//*/
+        /*
+        foreach (Sphere s in spheres) {
+            avePoint += s.position + s.radius * boundVec; // Maximum bounds
+            avePoint += s.position - s.radius * boundVec; // Minimum bounds
+        }//*/
 
         // Return
         return avePoint / numPoints;
@@ -449,14 +487,14 @@ public class RayTraceMaster : MonoBehaviour {
         }
 
         // Debug Report
-        if (DEBUG_LEVEL == 1) {
+        if (rayDebug.debugLevel >= 3) {
             int overlapCount = 0;
             for (int i = 0; i < FrontHits[hitIndex].Length; i++) {
                 if (BackHits[hitIndex].Contains(FrontHits[hitIndex][i]))
                     overlapCount++;
             }
             
-            Debug.Log(" > Total: " + count + ", Slice Axis: " + hitIndex + ", Front hits: " + FrontHits[hitIndex].Length + ", Backhits: " + BackHits[hitIndex].Length + ", Overlaps: " + overlapCount);
+            rayDebug.Log(" > Total: " + count + ", Slice Axis: " + hitIndex + ", Front hits: " + FrontHits[hitIndex].Length + ", Backhits: " + BackHits[hitIndex].Length + ", Overlaps: " + overlapCount, 3);
         }
 
         // Create largest extents for child bounds based on winning axis
@@ -537,6 +575,9 @@ public class RayTraceMaster : MonoBehaviour {
         // Setup Variables
         int numObjects = meshes.Count;
 
+        // Debug Report
+        rayDebug.Log("[MESH OBJECTS] SplitBounds_MeshObjects() called on " + numObjects + " object(s)", 3);
+
         // Generate Child Bounds & Lists
         // Bounds[] newBounds = SplitBounds(ComputeCenter(meshes), parent.extents, LayerMask.GetMask("RayTrace_mesh"), numObjects); // [WIP] ================= ! ! ! ! !
         Bounds[] newBounds = SplitBounds(parent.center, parent.extents, LayerMask.GetMask("RayTrace_mesh"), numObjects);
@@ -544,10 +585,7 @@ public class RayTraceMaster : MonoBehaviour {
         List<MeshObject> list2 = GetMeshObjectsInBound(newBounds[1]);
 
         // Debug Report
-        if (DEBUG_LEVEL == 1) {
-            Debug.Log("[MESH OBJECTS] SplitBounds_MeshObjects() called on " + numObjects + " object(s)");
-            Debug.Log(" > Child1 List Length = " + list1.Count + ", Child2 List Length = " + list2.Count);
-        }
+        rayDebug.Log(" > Child1 List Length = " + list1.Count + ", Child2 List Length = " + list2.Count, 3);
 
         // Decisions if nonempty
         if (numObjects > 0) {
@@ -558,9 +596,7 @@ public class RayTraceMaster : MonoBehaviour {
                     CreateBVH(newBounds[0], list1, depth + 1, index*2 + 1);
                 } else if (list1.Count > 1) {
                     // DEBUG Message for now, will figure out how to handle better later !!!!!
-                    if (DEBUG_LEVEL >= 1) {
-                        Debug.Log("<WARNING> Mesh object(s) left out of tree!");
-                    }
+                    rayDebug.Log("<WARNING> Mesh object(s) left out of tree!", 1);
                 }
             }
 
@@ -571,9 +607,7 @@ public class RayTraceMaster : MonoBehaviour {
                     CreateBVH(newBounds[1], list2, depth + 1, index*2 + 2);
                 } else if (list2.Count > 1) {
                     // DEBUG Message for now, will figure out how to handle better later !!!!!
-                    if (DEBUG_LEVEL >= 1) {
-                        Debug.Log("<WARNING>  Mesh object(s) left out of tree!");
-                    }
+                    rayDebug.Log("<WARNING>  Mesh object(s) left out of tree!", 1);
                 }
             }
 
@@ -597,16 +631,16 @@ public class RayTraceMaster : MonoBehaviour {
         // Setup Variables
         int numObjects = spheres.Count;
 
+        // Debug Report
+        rayDebug.Log("[SPHERES] SplitBounds_Spheres() called on " + numObjects + " object(s)", 3);
+
         // Generate Child Bounds & Lists
         Bounds[] newBounds = SplitBounds(ComputeCenter(spheres), parent.extents, LayerMask.GetMask("RayTrace_sphere"), numObjects);
         List<Sphere> list1 = GetSpheresInBound(newBounds[0]);
         List<Sphere> list2 = GetSpheresInBound(newBounds[1]);
 
         // Debug Report
-        if (DEBUG_LEVEL == 1) {
-            Debug.Log("[SPHERES] SplitBounds_Spheres() called on " + numObjects + " object(s)");
-            Debug.Log(" > Child1 List Length = " + list1.Count + ", Child2 List Length = " + list2.Count);
-        }
+        rayDebug.Log(" > Child1 List Length = " + list1.Count + ", Child2 List Length = " + list2.Count, 3);
 
         // Decisions if nonempty
         if (numObjects > 0) {
@@ -617,9 +651,7 @@ public class RayTraceMaster : MonoBehaviour {
                     CreateBVH(newBounds[0], list1, depth + 1, index*2 + 1);
                 } else if (list1.Count > 1) {
                     // DEBUG Message for now, will figure out how to handle better later !!!!!
-                    if (DEBUG_LEVEL >= 1) {
-                        Debug.Log("<WARNING> Sphere(s) left out of tree!");
-                    }
+                    rayDebug.Log("<WARNING> Sphere(s) left out of tree!", 1);
                 }
             }
 
@@ -630,9 +662,7 @@ public class RayTraceMaster : MonoBehaviour {
                     CreateBVH(newBounds[1], list2, depth + 1, index*2 + 2);
                 } else if (list2.Count > 1) {
                     // DEBUG Message for now, will figure out how to handle better later !!!!!
-                    if (DEBUG_LEVEL >= 1) {
-                        Debug.Log("<WARNING> Sphere(s) left out of tree!");
-                    }
+                    rayDebug.Log("<WARNING> Sphere(s) left out of tree!", 1);
                 }
             }
 
@@ -689,10 +719,8 @@ public class RayTraceMaster : MonoBehaviour {
         TrimBVHList(SphereBVH);
 
         // Debug Reporting
-        if (DEBUG_LEVEL == 1 || DEBUG_LEVEL == 2) {
-            Debug.Log("[MESH OBJECTS] Depth: " + MeshDepth + ", Expected Length: " + MeshLength + ", Real Length: " + MeshBVH.Count);
-            Debug.Log("[SPHERES] Depth: " + SphereDepth + ", Expected Length: " + SphereLength + ", Real Length: " + SphereBVH.Count);
-        }
+        rayDebug.Log("[MESH OBJECTS] Depth: " + MeshDepth + ", Expected Length: " + MeshLength + ", Real Length: " + MeshBVH.Count, 2);
+        rayDebug.Log("[SPHERES] Depth: " + SphereDepth + ", Expected Length: " + SphereLength + ", Real Length: " + SphereBVH.Count, 2);
 
         // Update Computer buffers
         CreateComputeBuffer(ref _meshObjectBuffer, _meshObjects, MeshObjectStructSize);
@@ -705,10 +733,13 @@ public class RayTraceMaster : MonoBehaviour {
         CreateComputeBuffer(ref _sphereBVHBuffer, SphereBVH, BVHNodeSize);
     }
 
-    /// Awake(): Camera setup///
+    /// Awake(): Setup ///
     private void Awake() {
         // Getting Camera
         _camera = GetComponent<Camera>();
+
+        // Getting Debug Component
+        rayDebug = GetComponent<RayTraceDebug>();
     }
 
     /// Update(): Resets image sampling count for when camera changes view ///
@@ -818,73 +849,15 @@ public class RayTraceMaster : MonoBehaviour {
         Render(destination);
     }
 
-    /// GizmosDrawBox(): Debug Box Drawing ///
-    private void GizmosDrawBox(Vector3 min, Vector3 max) {
-        // Setup Corners
-        // NOTE: Corner7 and Corner8 are just max and min directly
-        Vector3 corner1 = new Vector3(max.x, min.y, min.z);
-        Vector3 corner2 = new Vector3(min.x, max.y, min.z);
-        Vector3 corner3 = new Vector3(min.x, min.y, max.z);
-
-        Vector3 corner4 = new Vector3(min.x, max.y, max.z);
-        Vector3 corner5 = new Vector3(max.x, min.y, max.z);
-        Vector3 corner6 = new Vector3(max.x, max.y, min.z);
-
-        // Drawing lines
-        Gizmos.DrawLine(min, corner1);
-        Gizmos.DrawLine(min, corner2);
-        Gizmos.DrawLine(min, corner3);
-
-        Gizmos.DrawLine(max, corner4);
-        Gizmos.DrawLine(max, corner5);
-        Gizmos.DrawLine(max, corner6);
-
-        Gizmos.DrawLine(corner1, corner5);
-        Gizmos.DrawLine(corner1, corner6);
-
-        Gizmos.DrawLine(corner2, corner4);
-        Gizmos.DrawLine(corner2, corner6);
-
-        Gizmos.DrawLine(corner3, corner4);
-        Gizmos.DrawLine(corner3, corner5);
-    }
-
-    /// GizmosDrawTree(): Debug Tree Drawing ///
-    private void GizmosDrawTree(List<BVHNode> list, int depth, Color col, float colChange, int index = 0) {
-        if (depth > 0) {
-            // Get node
-            BVHNode node = list[index];
-
-            // Draw Bounding Volume
-            Gizmos.color = col;
-            GizmosDrawBox(node.vmin, node.vmax);
-
-            // Draw info (position in tree list, index of object)
-            GUIStyle style = new GUIStyle();
-            style.normal.textColor = (col*2.0f + Color.white) / 3.0f;
-            UnityEditor.Handles.Label((node.vmin + node.vmax) / 2.0f, "(" + index.ToString() + ", " + node.index.ToString() + ")", style);
-
-            // Recursion downwards
-            int step = (int) Mathf.Floor(Mathf.Pow(2, depth - 2));
-            GizmosDrawTree(list, depth - 1, new Color(col.r + colChange, col.g - colChange, col.b - colChange), colChange, index*2 + 1);
-            GizmosDrawTree(list, depth - 1, new Color(col.r + colChange, col.g - colChange, col.b - colChange), colChange, index*2 + 2);
-        }
-    }
-
     /// OnDrawGizmos(): Debug Drawing ///
     void OnDrawGizmos() {
-        // Drawing BVH Trees
-        GizmosDrawTree(SphereBVH, SphereDepth, new Color(0.0f, 0.0f, 1.0f), 1.0f / SphereDepth); // Draw Sphere BVH
-        GizmosDrawTree(MeshBVH, MeshDepth, new Color(0.0f, 1.0f, 0.0f), 1.0f / MeshDepth); // Draw Mesh BVH
+        if (rayDebug != null) {
+            // Drawing BVH Trees
+            rayDebug.DrawBVHTree(MeshBVH, MeshDepth, 0);
+            rayDebug.DrawBVHTree(SphereBVH, SphereDepth, 1);
 
-        // Draw Calculated Normals
-        foreach (MeshObject mesh in _meshObjects) {
-            for (int i = mesh.indices_offset; i < mesh.indices_offset + mesh.indices_count; i++) {
-                Gizmos.color = Color.white;
-                Gizmos.DrawSphere(mesh.localToWorldMatrix.MultiplyPoint3x4(_vertices[_indices[i]]), 0.005f);
-                Gizmos.color = Color.blue;
-                Gizmos.DrawLine(mesh.localToWorldMatrix.MultiplyPoint3x4(_vertices[_indices[i]]), mesh.localToWorldMatrix.MultiplyPoint3x4(_vertices[_indices[i]] + _normals[_indices[i]] * 0.1f));
-            }
+            // Draw Calculated Normals
+            rayDebug.DrawNormals(_meshObjects, _vertices, _indices, _normals);
         }
     }
 }
