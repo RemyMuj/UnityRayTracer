@@ -149,6 +149,32 @@ public class RayTraceMaster : MonoBehaviour {
         public Vector3 vmin;
         public Vector3 vmax;
         public int index;
+
+        public bool Equals(BVHNode other) {
+            return (other.vmax == vmax && other.vmin == vmin && other.index == index);
+        }
+
+        public override bool Equals(object obj) {
+            return (obj != null && GetType() == obj.GetType() && this.Equals((BVHNode) obj));
+        }
+
+        public override int GetHashCode() {
+            unchecked {
+                int hash = 17;
+                hash = (hash * 23) + vmin.GetHashCode();
+                hash = (hash * 23) + vmax.GetHashCode();
+                hash = (hash * 23) + index.GetHashCode();
+                return hash;
+            }
+        }
+
+        public static bool operator ==(BVHNode b1, BVHNode b2) {
+            return b1.Equals(b2);
+        }
+
+        public static bool operator !=(BVHNode b1, BVHNode b2) {
+            return !b1.Equals(b2);
+        }
     };
 
     // Bounding Volume Trees
@@ -412,6 +438,8 @@ public class RayTraceMaster : MonoBehaviour {
         // Return list of normals
         return normals;
     }//*/
+
+////////////////// Top-to-Bottom BVH Building /////////////////////
 
     /// ComputeCenter(MeshObjects): Compute ideal splitting center of all mesh objects in bounding box ///
     private Vector3 ComputeCenter(List<MeshObject> meshObjects) {
@@ -704,6 +732,9 @@ public class RayTraceMaster : MonoBehaviour {
 
     /// RebuildTrees(): Rebuild Bounding Volume Tree for Ray Trace Objects ///
     private void RebuildTrees(Bounds[] rootBounds) {
+        /// TESTING /// =====================================================================!!!!
+        SetupBVHRankList(SetupBVHLeaves(_spheres));
+
         // Mesh BVH Tree Rebuilding
         MeshDepth = Mathf.CeilToInt(Mathf.Log(_meshObjects.Count)) + 1;
         int MeshLength = (int) Mathf.Round(Mathf.Pow(2.0f, (float) MeshDepth)) - 1;
@@ -732,6 +763,129 @@ public class RayTraceMaster : MonoBehaviour {
         CreateComputeBuffer(ref _meshObjectBVHBuffer, MeshBVH, BVHNodeSize);
         CreateComputeBuffer(ref _sphereBVHBuffer, SphereBVH, BVHNodeSize);
     }
+
+//////////////////============================/////////////////////
+
+////////////////// Bottom-to-Top BVH Building /////////////////////
+
+    /// SetupBVHLeaves(): Setup Leaf Nodes at bottom of Mesh BVH tree ///
+    /*
+    private List<BVHNode> SetupBVHLeaves(List<MeshObject> meshes) {
+        //
+        // WIP
+    } //*/
+
+    /// SetupBVHLeaves(): Setup Leaf Nodes at bottom of Sphere BVH tree ///
+    private List<BVHNode> SetupBVHLeaves(List<Sphere> spheres) {
+        // Setup Variables
+        List<BVHNode> leaves = new List<BVHNode>();
+        
+        // Add a tight bound BVHNode for each sphere 
+        foreach (Sphere sphere in spheres) {
+            leaves.Add(new BVHNode() {
+                vmin = sphere.position - new Vector3(-sphere.radius, -sphere.radius, -sphere.radius),
+                vmax = sphere.position - new Vector3(sphere.radius, sphere.radius, sphere.radius),
+                index = _spheres.FindIndex(x => x == sphere)
+            });
+        }
+
+        // Return
+        return leaves;
+    }
+
+    /// SetupBVHPairingLists(): Setup node ranking list for each node ///
+    /// Ranking List: All other nodes sorted nearest-to-farthest in 2 concatenated lists: first regular nodes then, "forbidden" nodes
+    ///  - "Forbidden" node : A node where the vector between it and the chosen node intersects at least one other node. Disfavored to reduce overlap for node pairings
+    private List<List<BVHNode>> SetupBVHRankList(List<BVHNode> nodes) {
+        // Setup Variables
+        List<List<BVHNode>> rankList = new List<List<BVHNode>>();
+        List<(int index, double dis)> ranking = new List<(int index, double dis)>();
+        List<BVHNode> curList;
+        
+        double distance;
+        Vector3 test = new Vector3();
+        float lineDis = 0.0f;
+
+        // Build rank list for each node
+        foreach (BVHNode chosen in nodes) {
+            // Reset Variables
+            curList = new List<BVHNode>();
+            ranking.Clear();
+
+            // Finding Distance and forbiddenness
+            foreach (BVHNode other in nodes) {
+                if (chosen != other) {
+                    // Calculate distance
+                    distance = Mathf.Min(Vector3.SqrMagnitude(chosen.vmax - other.vmin), Vector3.SqrMagnitude(chosen.vmin - other.vmax));
+
+                    // Decide if Forbidden (mark with negative distance value)
+                    lineDis = 0.0f;
+                    test = (chosen.vmax + chosen.vmin) / 2.0f - (other.vmax + other.vmin) / 2.0f;
+
+                    if (Vector3.Magnitude(test) != 0) {
+                        foreach (BVHNode bystander in nodes) {
+                            if (bystander != chosen && bystander != other) {
+                                // Find perpendicular distance of bystander center to test vector
+                                lineDis = Vector3.Magnitude(Vector3.Cross((bystander.vmax + bystander.vmin) / 2.0f, test)) / Vector3.Magnitude(test);
+
+                                // Decide it intersects if closer than diagonal distance of bystander
+                                if (lineDis <= Vector3.Magnitude(bystander.vmax - bystander.vmin) / 2.0f) {
+                                    distance *= -1;
+                                }
+                            }
+                        }
+                    }
+
+                    // Add to ranking
+                    ranking.Add( (nodes.FindIndex(x => x == other), distance) );
+                }
+            }
+
+            // Sort Ranking
+            ranking.Sort(delegate((int index, double dis) x, (int index, double dis) y) {
+                // Mark equal distances equal
+                if (x.dis == y.dis) return 0;
+
+                // Sort negative distances (AKA forbidden nodes) to the left of positive distances (treat as negative being greater)
+                if (Mathf.Sign((float) x.dis) != Mathf.Sign((float) y.dis)) {
+                    if (x.dis < y.dis) {
+                        return 1;
+                    } else { 
+                        return -1;
+                    }
+                }
+
+                // Sort nearest to farthest of absolute value for same sign
+                if (x.dis < 0 || y.dis < 0) {
+                    return (-x.dis).CompareTo(-y.dis);
+                }
+
+                return (x.dis).CompareTo(y.dis);
+            });
+
+            // Copy sorted order to BVHNode list using indices
+            foreach ((int index, double dis) pair in ranking) {
+                curList.Add(nodes[pair.index]);
+            }
+
+            // Store Current BVHList
+            rankList.Add(curList);
+        }
+
+        // Return
+        return rankList;
+    }
+
+    /// PairBVHBounds(): Setup Leaf Nodes at bottom of BVH tree ///
+    /*    
+    private List<Bounds> PairBVHBounds(List<Bounds> nodes, ref float volume_general, ref float volume_overlap) {
+        // Setup Variables
+        List<Bounds> pairings = new List<Bounds>();
+        
+        //
+    } //*/
+
+//////////////////============================/////////////////////
 
     /// Awake(): Setup ///
     private void Awake() {
