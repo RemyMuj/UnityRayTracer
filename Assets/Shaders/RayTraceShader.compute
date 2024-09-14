@@ -154,7 +154,6 @@ Ray CreateCameraRay(float2 uv, float2 offset = float2(0,0)) {
 
 /// IntersectGroundPlane() ///
 void IntersectGroundPlane(Ray ray, inout RayHit bestHit) { 
-    /// ^^^ NOTE: "inout" does something special in HLSL to allow modification of an outside variable !!!
     // Calculate distance along the ray where the ground plane is intersected
     float t = -ray.origin.y / ray.direction.y;
 
@@ -174,7 +173,6 @@ void IntersectGroundPlane(Ray ray, inout RayHit bestHit) {
 
 /// IntersectSphere() ///
 void IntersectSphere(Ray ray, inout RayHit bestHit, Sphere sphere) {
-    /// ^^^ NOTE: "inout" does something special in HLSL to allow modification of an outside variable !!!
     // Calculate distance along the ray where the sphere is intersected
     float3 d = ray.origin - sphere.position;
     float p1 = -dot(ray.direction, d);
@@ -291,7 +289,6 @@ bool IntersectBVHNode(Ray ray, BVHNode node) {
 
 /// IntersectMeshBVH(): Binary intersection search through MeshBVH ///
 void IntersectMeshBVH(Ray ray, inout RayHit bestHit) {
-    // *Needs to be modified in future for multiple objects in 1 node (overlaps)
     // Set up array to put node indices to check
     int nodes[_MeshBVH_len];
     nodes[0] = 0;
@@ -327,7 +324,6 @@ void IntersectMeshBVH(Ray ray, inout RayHit bestHit) {
 
 /// IntersectSphereBVH(): Binary intersection search through SphereBVH ///
 void IntersectSphereBVH(Ray ray, inout RayHit bestHit) {
-    // *Needs to be modified in future for multiple objects in 1 node (overlaps)
     // Set up array to put node indices to check
     int nodes[_SphereBVH_len];
     nodes[0] = 0;
@@ -370,8 +366,14 @@ RayHit Trace(Ray ray) {
     IntersectGroundPlane(ray, bestHit);
 
     // Trace Primitives
-    IntersectSphereBVH(ray, bestHit);
-    IntersectMeshBVH(ray, bestHit);
+    uint count;
+    uint stride;
+
+    _MeshObjects.GetDimensions(count, stride);
+    if (count > 0) IntersectMeshBVH(ray, bestHit);
+
+    _Spheres.GetDimensions(count, stride);
+    if (count > 0) IntersectSphereBVH(ray, bestHit);
 
     // Final Return
     return bestHit;
@@ -380,7 +382,6 @@ RayHit Trace(Ray ray) {
 /// Shade(): Combines rendering of ray trace hits with skybox sampling
 float3 Shade(inout Ray ray, RayHit hit) {
     if (hit.distance < 1.#INF) {
-        // ^^^ NOTE: "1.#INF" stands for positive infinity and is allowed to compiled and be checked as a value
         // Calculate chances of diffuse and specular reflection
         hit.lighting.color_albedo = min(1.0f - hit.lighting.color_specular, hit.lighting.color_albedo);
         float specChance = dot(hit.lighting.color_specular, 1.0f / 3.0f);
