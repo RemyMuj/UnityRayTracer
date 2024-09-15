@@ -259,7 +259,7 @@ public class RayTraceMaster : MonoBehaviour {
     }
 
     /// RebuildObjectLists(): Rebuild All Ray Trace Object lists and compile data for tree building ///
-    private Bounds[] RebuildObjectLists() {
+    private void RebuildObjectLists() {
         //  & Clearing Lists
         _rayTraceObjectIndices.Clear();
         _meshObjects.Clear();
@@ -267,10 +267,6 @@ public class RayTraceMaster : MonoBehaviour {
         _indices.Clear();
         _normals.Clear();
         _spheres.Clear();
-
-        // Setup New Scene bounds
-        List<Bounds> MeshBoundsList = new List<Bounds>();
-        List<Bounds> SphereBoundsList = new List<Bounds>();
 
         // Loop over all Ray Trace Objects and gather their data
         foreach (RayTraceObject obj in _rayTraceObjects) {
@@ -280,9 +276,6 @@ public class RayTraceMaster : MonoBehaviour {
             // Type Specific Setup
             switch(obj.type) {
                 case 1: // Handling Spheres
-                    // Keep Bounds
-                    SphereBoundsList.Add(obj.bounds);
-
                     // Add Lighting Parameters
                     _lighting.color_albedo = new Vector3(obj.albedoColor.r, obj.albedoColor.g, obj.albedoColor.b);
                     _lighting.color_specular = new Vector3(obj.specularColor.r, obj.specularColor.g, obj.specularColor.b);
@@ -301,9 +294,6 @@ public class RayTraceMaster : MonoBehaviour {
                     break;
 
                 default: // Handling Meshes
-                    // Keep Bounds
-                    MeshBoundsList.Add(obj.bounds);
-
                     // Add vertex data
                     Mesh mesh = obj.GetComponent<MeshFilter>().sharedMesh;
                     int firstVertex = _vertices.Count;
@@ -343,36 +333,6 @@ public class RayTraceMaster : MonoBehaviour {
         rayDebug.Log("# of Vertices: " + _vertices.Count, 2);
         rayDebug.Log("# of Indices: " + _indices.Count, 2);
         rayDebug.Log("# of Normals: " + _normals.Count, 2);
-
-        // Encapsulate Bounds
-        Bounds[] return_array = new Bounds[2];
-
-        if (MeshBoundsList.Count >= 1) {
-            Bounds meshBounds = MeshBoundsList[0];
-
-            foreach (Bounds bound in MeshBoundsList) {
-                meshBounds.Encapsulate(bound);
-            }
-
-            return_array[0] = meshBounds;
-        } else {
-            return_array[0] = new Bounds();
-        }
-
-        if (SphereBoundsList.Count >= 1) {
-            Bounds sphereBounds = SphereBoundsList[0];
-
-            foreach (Bounds bound in SphereBoundsList) {
-                sphereBounds.Encapsulate(bound);
-            }
-
-            return_array[1] = sphereBounds;
-        } else {
-            return_array[1] = new Bounds();
-        }
-
-        // Return bounds
-        return return_array;
     }
 
     /// ComputeNormals(Mesh, Vertex): Compute the normals associated with the vertices of a mesh ///
@@ -439,332 +399,8 @@ public class RayTraceMaster : MonoBehaviour {
         return normals;
     }//*/
 
-////////////////// Top-to-Bottom BVH Building /////////////////////
-//*
-    /// ComputeCenter(MeshObjects): Compute ideal splitting center of all mesh objects in bounding box ///
-    private Vector3 ComputeCenter(List<MeshObject> meshObjects) {
-        // Variables
-        Vector3 avePoint = new Vector3();
-        Vector3 centerPoint = new Vector3();
-        float numPoints = 0.0f;
-        int lastIndex;
-
-        // Adding Coordinates
-        foreach (MeshObject obj in meshObjects) {
-            // Find Mesh Object Center
-            lastIndex = obj.indices_count + obj.indices_offset;
-            for (int i = obj.indices_offset; i < lastIndex; i++) {
-                centerPoint += _vertices[i];
-            }
-
-            // Add center to averaging vector
-            avePoint += centerPoint / obj.indices_count;
-            numPoints++;
-        }
-
-        // Return
-        return avePoint / numPoints;
-    }
-    
-    /// ComputeCenter(Spheres): Compute ideal splitting center of all spheres in bounding box ///
-    private Vector3 ComputeCenter(List<Sphere> spheres) {
-        // Variables
-        Vector3 avePoint = new Vector3(0.0f, 0.0f, 0.0f);
-        Vector3 boundVec = (1.0f / Mathf.Sqrt(2.0f)) * (new Vector3(1.0f, 1.0f, 1.0f));
-        float numPoints = (float) spheres.Count;// * 2.0f;
-
-        // Adding Coordinates
-        //*
-        foreach (Sphere s in spheres) {
-            avePoint += s.position;
-        }//*/
-        /*
-        foreach (Sphere s in spheres) {
-            avePoint += s.position + s.radius * boundVec; // Maximum bounds
-            avePoint += s.position - s.radius * boundVec; // Minimum bounds
-        }//*/
-
-        // Return
-        return avePoint / numPoints;
-    }
-
-    /// SplitBounds() ///
-    private Bounds[] SplitBounds(Vector3 start, Vector3 extents, LayerMask mask, int count) {
-        // Setup Variables
-        float[] counts = {count / 2.0f, count / 2.0f, count / 2.0f};
-        int hitIndex = 0;
-
-        // Test Collision boxes along each axis
-        Collider[][] FrontHits = new Collider[3][];
-        Collider[][] BackHits = new Collider[3][];
-
-        FrontHits[0] = Physics.OverlapBox(start + new Vector3(extents.x / 2.0f, 0, 0), new Vector3(extents.x / 2.0f, extents.y, extents.z), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // x-axis test
-        FrontHits[1] = Physics.OverlapBox(start + new Vector3(0, extents.y / 2.0f, 0), new Vector3(extents.x, extents.y / 2.0f, extents.z), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // y-axis test
-        FrontHits[2] = Physics.OverlapBox(start + new Vector3(0, 0, extents.z / 2.0f), new Vector3(extents.x, extents.y, extents.z / 2.0f), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // z-axis test
-
-        BackHits[0] = Physics.OverlapBox(start - new Vector3(extents.x / 2.0f, 0, 0), new Vector3(extents.x / 2.0f, extents.y, extents.z), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // x-axis test
-        BackHits[1] = Physics.OverlapBox(start - new Vector3(0, extents.y / 2.0f, 0), new Vector3(extents.x, extents.y / 2.0f, extents.z), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // y-axis test
-        BackHits[2] = Physics.OverlapBox(start - new Vector3(0, 0, extents.z / 2.0f), new Vector3(extents.x, extents.y, extents.z / 2.0f), Quaternion.identity, mask, QueryTriggerInteraction.Ignore); // z-axis test
-
-        // Compare slicing axes
-        for (int i = 0; i < 3; i++) {
-            counts[i] = Mathf.Abs(counts[i] - FrontHits[i].Length);
-
-            if (Mathf.Abs(counts[i]) <= Mathf.Min(counts)) 
-                hitIndex = i;
-        }
-
-        // Debug Report
-        if (rayDebug.debugLevel >= 3) {
-            int overlapCount = 0;
-            for (int i = 0; i < FrontHits[hitIndex].Length; i++) {
-                if (BackHits[hitIndex].Contains(FrontHits[hitIndex][i]))
-                    overlapCount++;
-            }
-            
-            rayDebug.Log(" > Total: " + count + ", Slice Axis: " + hitIndex + ", Front hits: " + FrontHits[hitIndex].Length + ", Backhits: " + BackHits[hitIndex].Length + ", Overlaps: " + overlapCount, 3);
-        }
-
-        // Create largest extents for child bounds based on winning axis
-        Bounds[] final = new Bounds[2];
-
-        if (FrontHits[hitIndex].Length > 0) {
-            // Setup first bounds
-            Bounds bound1 = FrontHits[hitIndex][0].bounds;
-
-            // Loop through remaining bounds
-            foreach (Collider hit in FrontHits[hitIndex]) {
-                // Find object and object index
-                RayTraceObject obj = hit.gameObject.GetComponent<RayTraceObject>();
-                int index = _rayTraceObjects.FindIndex(x => x == obj); 
-
-                // Encapsulate Object
-                if (index != -1) {
-                    bound1.Encapsulate(obj.bounds);
-                }
-            }
-
-            // Setup for return
-            final[0] = bound1;
-        }
-
-        if (BackHits[hitIndex].Length > 0) {
-            // Setup first bounds
-            Bounds bound2 = BackHits[hitIndex][0].bounds;
-
-            // Loop through remaining bounds
-            foreach (Collider hit in BackHits[hitIndex]) {
-                // Find object and object index
-                RayTraceObject obj = hit.gameObject.GetComponent<RayTraceObject>();
-                int index = _rayTraceObjects.FindIndex(x => x == obj); 
-
-                // Encapsulate Object
-                if (index != -1) {
-                    bound2.Encapsulate(obj.bounds);
-                }
-            }
-
-            // Setup for return
-            final[1] = bound2;
-        }
-
-        // Return Child Nodes
-        return final;
-    }
-
-    /// GetMeshObjectsInBound() /// 
-    private List<MeshObject> GetMeshObjectsInBound(Bounds bounds) {
-        List<MeshObject> list = new List<MeshObject>();
-
-        foreach (RayTraceObject obj in _rayTraceObjects) {
-            if (obj.type == 0 && bounds.Intersects(obj.bounds)) {
-                list.Add(_meshObjects[_rayTraceObjectIndices[_rayTraceObjects.FindIndex(x => x == obj)]]);
-            }
-        }
-
-        return list;
-    }
-
-    /// GetSpheresInBound() ///
-    private List<Sphere> GetSpheresInBound(Bounds bounds) {
-        List<Sphere> list = new List<Sphere>();
-
-        foreach (RayTraceObject obj in _rayTraceObjects) {
-            if (obj.type == 1 && bounds.Intersects(obj.bounds)) {
-                list.Add(_spheres[_rayTraceObjectIndices[_rayTraceObjects.FindIndex(x => x == obj)]]);
-            }
-        }
-
-        return list;
-    }
-
-    /// CreateBVH(): Create BVH for MeshObjects in scene ///
-    private void CreateBVH(Bounds parent, List<MeshObject> meshes, int depth, int index = 0) {
-        // Setup Variables
-        int numObjects = meshes.Count;
-
-        // Debug Report
-        rayDebug.Log("[MESH OBJECTS] SplitBounds_MeshObjects() called on " + numObjects + " object(s)", 3);
-
-        // Generate Child Bounds & Lists
-        // Bounds[] newBounds = SplitBounds(ComputeCenter(meshes), parent.extents, LayerMask.GetMask("RayTrace_mesh"), numObjects); // [WIP] ================= ! ! ! ! !
-        Bounds[] newBounds = SplitBounds(parent.center, parent.extents, LayerMask.GetMask("RayTrace_mesh"), numObjects);
-        List<MeshObject> list1 = GetMeshObjectsInBound(newBounds[0]);
-        List<MeshObject> list2 = GetMeshObjectsInBound(newBounds[1]);
-
-        // Debug Report
-        rayDebug.Log(" > Child1 List Length = " + list1.Count + ", Child2 List Length = " + list2.Count, 3);
-
-        // Decisions if nonempty
-        if (numObjects > 0) {
-            // Left Child Decisions
-            if (numObjects > 1 && depth <= MeshDepth) {
-                // Recursion
-                if (list1.Count > 0 && depth < MeshDepth) {
-                    CreateBVH(newBounds[0], list1, depth + 1, index*2 + 1);
-                } else if (list1.Count > 1) {
-                    // DEBUG Message for now, will figure out how to handle better later !!!!!
-                    rayDebug.Log("<WARNING> Mesh object(s) left out of tree!", 1);
-                }
-            }
-
-            // Right Child Decisions
-            if (numObjects > 1 && depth <= MeshDepth) {
-                // Recursion
-                if (list2.Count > 0 && depth < MeshDepth) {
-                    CreateBVH(newBounds[1], list2, depth + 1, index*2 + 2);
-                } else if (list2.Count > 1) {
-                    // DEBUG Message for now, will figure out how to handle better later !!!!!
-                    rayDebug.Log("<WARNING>  Mesh object(s) left out of tree!", 1);
-                }
-            }
-
-            // Node Self Addition
-            BVHNode node = new BVHNode();
-            node.vmin = parent.min;
-            node.vmax = parent.max;
-            node.index = -1;
-
-            if (numObjects == 1 || (numObjects >= 1 && depth >= MeshDepth)) {
-                node.index = _meshObjects.FindIndex(x => (x == meshes[0]));
-            }
-
-            MeshBVH.RemoveAt(index);
-            MeshBVH.Insert(index, node);
-        }
-    }
-
-    /// CreateBVH(): Create BVH for Spheres in scene ///
-    private void CreateBVH(Bounds parent, List<Sphere> spheres, int depth, int index = 0) {
-        // Setup Variables
-        int numObjects = spheres.Count;
-
-        // Debug Report
-        rayDebug.Log("[SPHERES] SplitBounds_Spheres() called on " + numObjects + " object(s)", 3);
-
-        // Generate Child Bounds & Lists
-        Bounds[] newBounds = SplitBounds(ComputeCenter(spheres), parent.extents, LayerMask.GetMask("RayTrace_sphere"), numObjects);
-        List<Sphere> list1 = GetSpheresInBound(newBounds[0]);
-        List<Sphere> list2 = GetSpheresInBound(newBounds[1]);
-
-        // Debug Report
-        rayDebug.Log(" > Child1 List Length = " + list1.Count + ", Child2 List Length = " + list2.Count, 3);
-
-        // Decisions if nonempty
-        if (numObjects > 0) {
-            // Left Child Decisions
-            if (numObjects > 1 && depth <= SphereDepth) {
-                // Recursion
-                if (list1.Count > 0 && depth < SphereDepth) {
-                    CreateBVH(newBounds[0], list1, depth + 1, index*2 + 1);
-                } else if (list1.Count > 1) {
-                    // DEBUG Message for now, will figure out how to handle better later !!!!!
-                    rayDebug.Log("<WARNING> Sphere(s) left out of tree!", 1);
-                }
-            }
-
-            // Right Child Decisions
-            if (numObjects > 1 && depth <= SphereDepth) {
-                // Recursion
-                if (list2.Count > 0 && depth < SphereDepth) {
-                    CreateBVH(newBounds[1], list2, depth + 1, index*2 + 2);
-                } else if (list2.Count > 1) {
-                    // DEBUG Message for now, will figure out how to handle better later !!!!!
-                    rayDebug.Log("<WARNING> Sphere(s) left out of tree!", 1);
-                }
-            }
-
-            // Node Self Addition
-            BVHNode node = new BVHNode();
-            node.vmin = parent.min;
-            node.vmax = parent.max;
-            node.index = -1;
-
-            if (numObjects == 1 || (numObjects >= 1 && depth >= SphereDepth)) {
-                node.index = _spheres.FindIndex(x => (x == spheres[0]));
-            }
-
-            SphereBVH.RemoveAt(index);
-            SphereBVH.Insert(index, node);
-        }
-    }
-
-    /// RebuildTrees(): Rebuild Bounding Volume Tree for Ray Trace Objects ///
-    private void RebuildTrees(Bounds[] rootBounds) {
-        // Mesh BVH Tree Rebuilding
-        MeshDepth = Mathf.CeilToInt(Mathf.Log(_meshObjects.Count)) + 1;
-        int MeshLength = (int) Mathf.Round(Mathf.Pow(2.0f, (float) MeshDepth)) - 1;
-        PrepareBVHList(MeshBVH, MeshLength);
-        CreateBVH(rootBounds[0], _meshObjects, 1);
-        TrimBVHList(MeshBVH);
-
-        // Sphere BVH Tree Rebuilding
-        SphereDepth = Mathf.CeilToInt(Mathf.Log(_spheres.Count)) + 1;
-        int SphereLength = (int) Mathf.Round(Mathf.Pow(2.0f, (float) SphereDepth)) - 1;
-        PrepareBVHList(SphereBVH, SphereLength);
-        CreateBVH(rootBounds[1], _spheres, 1);
-        TrimBVHList(SphereBVH);
-
-        // Debug Reporting
-        rayDebug.Log("[MESH OBJECTS] Depth: " + MeshDepth + ", Expected Length: " + MeshLength + ", Real Length: " + MeshBVH.Count, 2);
-        rayDebug.Log("[SPHERES] Depth: " + SphereDepth + ", Expected Length: " + SphereLength + ", Real Length: " + SphereBVH.Count, 2);
-
-        // Update Compute buffers
-        CreateComputeBuffer(ref _meshObjectBuffer, _meshObjects, MeshObjectStructSize);
-        CreateComputeBuffer(ref _vertexBuffer, _vertices, 12);
-        CreateComputeBuffer(ref _indexBuffer, _indices, 4);
-        CreateComputeBuffer(ref _normalBuffer, _normals, 12);
-        CreateComputeBuffer(ref _sphereBuffer, _spheres, SphereStructSize);
-
-        CreateComputeBuffer(ref _meshObjectBVHBuffer, MeshBVH, BVHNodeSize);
-        CreateComputeBuffer(ref _sphereBVHBuffer, SphereBVH, BVHNodeSize);
-    }
-//*/
-//////////////////============================/////////////////////
-
-    /// PrepareBVHList(): Prepare BVH list to be used with empty nodes ///
-    private void PrepareBVHList(List<BVHNode> list, int length) {
-        for (int i = 0; i < length; i++) {
-            list.Add(new BVHNode() { 
-                vmin = new Vector3(0.0f, 0.0f, 0.0f),
-                vmax = new Vector3(0.0f, 0.0f, 0.0f),
-                index = -1
-            });
-        }
-    }
-
-    /// TrimBVHList(): Trim empty nodes off the end of the list ///
-    private void TrimBVHList(List<BVHNode> list) {
-        int i = list.Count - 1;
-
-        while(i > 0 && list[i].index < 0) {
-            list.RemoveAt(i);
-            i--;
-        }
-    }
-
 ////////////////// Bottom-to-Top BVH Building /////////////////////
-//*
+
     /// SetupBVHLeaves(): Setup Leaf Nodes at bottom of Mesh BVH tree ///
     private List<BVHNode> SetupBVHLeaves(List<MeshObject> meshes) {
         // Setup Variables
@@ -906,28 +542,76 @@ public class RayTraceMaster : MonoBehaviour {
     private List<BVHNode> PairBVHBounds(List<BVHNode> nodes, out List<(int left, int right)> curChildren) {
         // Setup Variables
         List<List<BVHNode>> rankList = SetupBVHRankList(nodes);
-        List<BVHNode> bestPairing;
-        double bestVolume = -1.0;
-        List<BVHNode> pairing;
-        double volume;
-        List<(int left, int right)> pairingChildren = new List<(int left, int right)>();
+        List<BVHNode> bestPairing = new List<BVHNode>();
+        float bestVolume = -1.0f;
+        List<BVHNode> pairing = new List<BVHNode>();
+        float volume;
+        List<bool> paired = new List<bool>();
 
+        curChildren = new List<(int left, int right)>();
         int numTests = nodes.Count;
+        int index;
+        int otherIndex;
+        BVHNode node;
         
         // Test different pairings
         for (int i = 0; i < numTests; i++) {
             // Setup Variables
-            pairing = new List<BVHNode>();
-            pairingChildren.Clear();
-            volume = 0.0;
+            pairing.Clear();
+            curChildren.Clear();
+            paired.Clear();
+            for (int n = 0; n < nodes.Count; n++) {paired.Add(false);}
+            volume = 0.0f;
 
             // Make Candidate pairing
-            // WIP
+            for (int j = i; j < i + numTests; j++) {
+                // Index for Choosing node
+                index = j % nodes.Count;
 
-            // Choose if Total node volumes lowest found so far
-            if (volume < bestVolume || bestVolume < 0.0) {
-                bestPairing = pairing;
-                bestVolume = 0.0;
+                if (paired[index] == false) {
+                    // Choose first other node in rankList that is unpaired
+                    for (int k = 0; k < rankList[index].Count; k++) {
+                        otherIndex = nodes.FindIndex(x => x == rankList[index][k]);
+                        if (!paired[otherIndex]) {
+                            // Confirm Pairing
+                            paired[index] = true;
+                            paired[otherIndex] = true;
+
+                            // Create parent
+                            node = new BVHNode() {
+                                vmin = new Vector3(Mathf.Min(Mathf.Min(nodes[index].vmin.x, nodes[otherIndex].vmin.x), Mathf.Min(nodes[index].vmax.x, nodes[otherIndex].vmax.x)),
+                                    Mathf.Min(Mathf.Min(nodes[index].vmin.y, nodes[otherIndex].vmin.y), Mathf.Min(nodes[index].vmax.y, nodes[otherIndex].vmax.y)),
+                                    Mathf.Min(Mathf.Min(nodes[index].vmin.z, nodes[otherIndex].vmin.z), Mathf.Min(nodes[index].vmax.z, nodes[otherIndex].vmax.z))),
+                                vmax = new Vector3(Mathf.Max(Mathf.Max(nodes[index].vmin.x, nodes[otherIndex].vmin.x), Mathf.Max(nodes[index].vmax.x, nodes[otherIndex].vmax.x)),
+                                    Mathf.Max(Mathf.Max(nodes[index].vmin.y, nodes[otherIndex].vmin.y), Mathf.Max(nodes[index].vmax.y, nodes[otherIndex].vmax.y)),
+                                    Mathf.Max(Mathf.Max(nodes[index].vmin.z, nodes[otherIndex].vmin.z), Mathf.Max(nodes[index].vmax.z, nodes[otherIndex].vmax.z))),
+                                index = -1
+                            };
+
+                            // Add to pairing, children and volume
+                            pairing.Add(node);
+                            curChildren.Add((index, otherIndex));
+                            volume += (node.vmax.x - node.vmin.x) * (node.vmax.y - node.vmin.y) * (node.vmax.z - node.vmin.z);
+
+                            // Exit for loop
+                            k = nodes.Count;
+                        }
+                    }
+
+                    // Pair lone node as self
+                    if (!paired[index]) {
+                        node = nodes[index];
+                        pairing.Add(node);
+                        curChildren.Add((index, -1));
+                        volume += (node.vmax.x - node.vmin.x) * (node.vmax.y - node.vmin.y) * (node.vmax.z - node.vmin.z);
+                    }
+                }
+
+                // Choose if Total node volumes lowest found so far
+                if (volume < bestVolume || bestVolume < 0.0f) {
+                    bestPairing = pairing;
+                    bestVolume = volume;
+                }
             }
         }
 
@@ -944,19 +628,26 @@ public class RayTraceMaster : MonoBehaviour {
         // Sort pairings to line up children
         for (int i = 0; i < layers.Count; i++) {
             for (int j = 0; j < layers[i].Count; j++) {
+                // Debug printing
+                rayDebug.Log("Layer " + i + " Length: " + layers[i].Count, 3);
+
                 // Sort layer below to line up children
                 if (i < layers.Count - 1) {
                     // Sort Left Child
                     newIndex = 2 * j + 1;
-                    swap = layers[i + 1][newIndex];
-                    layers[i + 1][newIndex] = layers[i + 1][children[i][j].left];
-                    layers[i + 1][children[i][j].left] = swap;
+                    if (j < children[i].Count && children[i][j].left >= 0 && newIndex < layers[i+1].Count) {
+                        swap = layers[i + 1][newIndex];
+                        layers[i + 1][newIndex] = layers[i + 1][children[i][j].left];
+                        layers[i + 1][children[i][j].left] = swap;
+                    }
 
                     // Sort right Child
                     newIndex = 2 * j + 2;
-                    swap = layers[i + 1][newIndex];
-                    layers[i + 1][newIndex] = layers[i + 1][children[i][j].right];
-                    layers[i + 1][children[i][j].right] = swap;
+                    if (j < children[i].Count && children[i][j].right >= 0 && newIndex < layers[i+1].Count) {
+                        swap = layers[i + 1][newIndex];
+                        layers[i + 1][newIndex] = layers[i + 1][children[i][j].right];
+                        layers[i + 1][children[i][j].right] = swap;
+                    }
                 }
 
                 // Add self to BVH List (already sorted)
@@ -1029,8 +720,8 @@ public class RayTraceMaster : MonoBehaviour {
         int MeshLength = (int) Mathf.Round(Mathf.Pow(2.0f, (float) MeshDepth)) - 1;
         int SphereLength = (int) Mathf.Round(Mathf.Pow(2.0f, (float) SphereDepth)) - 1;
 
-        rayDebug.Log("[MESH OBJECTS] Depth: " + MeshDepth + ", Complete Length: " + MeshLength + ", Real Length: " + MeshBVH.Count, 2);
-        rayDebug.Log("[SPHERES] Depth: " + SphereDepth + ", Complete Length: " + SphereLength + ", Real Length: " + SphereBVH.Count, 2);
+        rayDebug.Log("[MESH OBJECTS] \n > Depth: " + MeshDepth + "\n > Complete Length: " + MeshLength + "\n > Real Length: " + MeshBVH.Count, 2);
+        rayDebug.Log("[SPHERES] \n > Depth: " + SphereDepth + "\n > Complete Length: " + SphereLength + "\n > Real Length: " + SphereBVH.Count, 2);
 
         // Update Compute buffers
         CreateComputeBuffer(ref _meshObjectBuffer, _meshObjects, MeshObjectStructSize);
@@ -1042,7 +733,7 @@ public class RayTraceMaster : MonoBehaviour {
         CreateComputeBuffer(ref _meshObjectBVHBuffer, MeshBVH, BVHNodeSize);
         CreateComputeBuffer(ref _sphereBVHBuffer, SphereBVH, BVHNodeSize);
     }
-//*/
+
 //////////////////============================/////////////////////
 
     /// Awake(): Setup ///
@@ -1151,7 +842,9 @@ public class RayTraceMaster : MonoBehaviour {
             _treesNeedRebuilding = false;
 
             // Rebuild Buffers
-            RebuildTrees(RebuildObjectLists());
+            //RebuildTrees(RebuildObjectLists());
+            RebuildObjectLists();
+            RebuildTrees();
         }
 
         // Update Parameters
