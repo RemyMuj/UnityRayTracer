@@ -139,13 +139,13 @@ public class RayTraceDebug : MonoBehaviour {
         switch(type) {
             case 0: // Mesh BVH Tree
                 if (!drawMeshTree) return 1;
-                startCol = new Color(0.0f, 1.0f, 0.0f);
+                startCol = new Color(0.0f, 0.0f, 1.0f);
                 endCol = new Color(1.0f, 1.0f, 0.0f);
                 break;
             case 1: // Sphere BVH Tree
                 if (!drawSphereTree) return 1;
                 startCol = new Color(1.0f, 0.0f, 0.0f);
-                endCol = new Color(1.0f, 1.0f, 0.0f);
+                endCol = new Color(0.0f, 1.0f, 0.0f);
                 break;
             default: // Invalid Tree Type
                 return 1;
