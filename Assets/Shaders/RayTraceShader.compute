@@ -269,6 +269,9 @@ void IntersectMeshObject(Ray ray, inout RayHit bestHit, MeshObject meshObject) {
 
 /// IntersectBVHNode(): Axis-Aligned Bounding Box intersection test (for using binary volume search) ///
 bool IntersectBVHNode(Ray ray, BVHNode node) {
+    // Exit if empty node
+    if (node.vmin[0] == node.vmax[0] && node.vmin[1] == node.vmax[1] && node.vmin[2] == node.vmax[2]) return false;
+
     // Calculate mutual time range to cross extent boundaries
     float t_min = -FLOAT_MAX;
     float t_max = FLOAT_MAX;

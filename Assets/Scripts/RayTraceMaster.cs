@@ -542,13 +542,16 @@ public class RayTraceMaster : MonoBehaviour {
     private List<BVHNode> PairBVHBounds(List<BVHNode> nodes, out List<(int left, int right)> curChildren) {
         // Setup Variables
         List<List<BVHNode>> rankList = SetupBVHRankList(nodes);
+
         List<BVHNode> bestPairing = new List<BVHNode>();
         float bestVolume = -1.0f;
+        curChildren = new List<(int left, int right)>();
+
         List<BVHNode> pairing = new List<BVHNode>();
         float volume;
+        List<(int left, int right)> tempChildren = new List<(int left, int right)>();
         List<bool> paired = new List<bool>();
 
-        curChildren = new List<(int left, int right)>();
         int numTests = nodes.Count;
         int index;
         int otherIndex;
@@ -558,7 +561,7 @@ public class RayTraceMaster : MonoBehaviour {
         for (int i = 0; i < numTests; i++) {
             // Setup Variables
             pairing.Clear();
-            curChildren.Clear();
+            tempChildren.Clear();
             paired.Clear();
             for (int n = 0; n < nodes.Count; n++) {paired.Add(false);}
             volume = 0.0f;
@@ -590,7 +593,7 @@ public class RayTraceMaster : MonoBehaviour {
 
                             // Add to pairing, children and volume
                             pairing.Add(node);
-                            curChildren.Add((index, otherIndex));
+                            tempChildren.Add((index, otherIndex));
                             volume += (node.vmax.x - node.vmin.x) * (node.vmax.y - node.vmin.y) * (node.vmax.z - node.vmin.z);
 
                             // Exit for loop
@@ -602,7 +605,7 @@ public class RayTraceMaster : MonoBehaviour {
                     if (!paired[index]) {
                         node = nodes[index];
                         pairing.Add(node);
-                        curChildren.Add((index, -1));
+                        tempChildren.Add((index, -1));
                         volume += (node.vmax.x - node.vmin.x) * (node.vmax.y - node.vmin.y) * (node.vmax.z - node.vmin.z);
                     }
                 }
@@ -611,11 +614,13 @@ public class RayTraceMaster : MonoBehaviour {
                 if (volume < bestVolume || bestVolume < 0.0f) {
                     bestPairing = pairing;
                     bestVolume = volume;
+                    curChildren = tempChildren;
                 }
             }
         }
 
         // Return
+        rayDebug.Log("curChildren: " + string.Join(", ", curChildren), 2);
         return bestPairing;
     }
 
@@ -623,7 +628,9 @@ public class RayTraceMaster : MonoBehaviour {
     private void ConvertPairings(List<BVHNode> list, List<List<BVHNode>> layers, List<List<(int left, int right)>> children) {
         // Setup variables
         int newIndex;
-        BVHNode swap;
+        int swapIndex;
+        BVHNode swapNode;
+        (int left, int right) swapChild;
 
         // Sort pairings to line up children
         for (int i = 0; i < layers.Count; i++) {
@@ -634,19 +641,47 @@ public class RayTraceMaster : MonoBehaviour {
                 // Sort layer below to line up children
                 if (i < layers.Count - 1) {
                     // Sort Left Child
-                    newIndex = 2 * j + 1;
+                    newIndex = 2 * j;
                     if (j < children[i].Count && children[i][j].left >= 0 && newIndex < layers[i+1].Count) {
-                        swap = layers[i + 1][newIndex];
+                        // Swapping Node
+                        swapNode = layers[i + 1][newIndex];
                         layers[i + 1][newIndex] = layers[i + 1][children[i][j].left];
-                        layers[i + 1][children[i][j].left] = swap;
+                        layers[i + 1][children[i][j].left] = swapNode;
+
+                        // Updating Children Index Info
+                        swapIndex = children[i].FindIndex(x => x.right == newIndex);
+                        if (swapIndex != -1) children[i][swapIndex] = (children[i][swapIndex].left, children[i][j].left);
+                        swapIndex = children[i].FindIndex(x => x.left == newIndex);
+                        if (swapIndex != -1) children[i][swapIndex] = (children[i][j].left, children[i][swapIndex].right);
+
+                        // Swapping Children Info
+                        if (i + 1 < children.Count && newIndex < children[i + 1].Count) {
+                            swapChild = children[i + 1][newIndex];
+                            children[i + 1][newIndex] = children[i + 1][children[i][j].left];
+                            children[i + 1][children[i][j].left] = swapChild;
+                        }
                     }
 
                     // Sort right Child
-                    newIndex = 2 * j + 2;
+                    newIndex = 2 * j + 1;
                     if (j < children[i].Count && children[i][j].right >= 0 && newIndex < layers[i+1].Count) {
-                        swap = layers[i + 1][newIndex];
+                        // Swapping Node
+                        swapNode = layers[i + 1][newIndex];
                         layers[i + 1][newIndex] = layers[i + 1][children[i][j].right];
-                        layers[i + 1][children[i][j].right] = swap;
+                        layers[i + 1][children[i][j].right] = swapNode;
+
+                        // Updating Children Index Info
+                        swapIndex = children[i].FindIndex(x => x.right == newIndex);
+                        if (swapIndex != -1) children[i][swapIndex] = (children[i][swapIndex].left, children[i][j].right);
+                        swapIndex = children[i].FindIndex(x => x.left == newIndex);
+                        if (swapIndex != -1) children[i][swapIndex] = (children[i][j].right, children[i][swapIndex].right);
+
+                        // Swapping Children Info
+                        if (i + 1 < children.Count && newIndex < children[i + 1].Count) {
+                            swapChild = children[i + 1][newIndex];
+                            children[i + 1][newIndex] = children[i + 1][children[i][j].right];
+                            children[i + 1][children[i][j].right] = swapChild;
+                        }
                     }
                 }
 
@@ -693,13 +728,13 @@ public class RayTraceMaster : MonoBehaviour {
         List<List<(int left, int right)>> children = new List<List<(int left, int right)>>();
 
         List<BVHNode> curLayer = SetupBVHLeaves(spheres);
-        List<(int left, int right)> curChildren = new List<(int left, int right)>();
+        List<(int left, int right)> curChildren;
 
         layers.Add(curLayer);
 
         // Make pairings until at root BVHNode
         for (int i = 0; i < SphereDepth - 1; i++) {
-            curChildren.Clear();
+            curChildren = new List<(int left, int right)>();
             curLayer = PairBVHBounds(curLayer, out curChildren);
 
             layers.Insert(0, curLayer);
@@ -707,6 +742,9 @@ public class RayTraceMaster : MonoBehaviour {
         }
         
         // Convert to array
+        for (int i = 0; i < SphereDepth - 1; i++) {
+            rayDebug.Log("Children[" + i + "]: " + string.Join(", ", children[i]), 2);
+        }
         ConvertPairings(SphereBVH, layers, children);
     }
 
