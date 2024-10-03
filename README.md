@@ -3,18 +3,19 @@ This is a small first time attempt at ray tracing through compute shaders in Uni
 
 ## Plans:
  - Bounding Volume Optimization                     \(Work In Progress\)
-    - Better BVH Building (perhaps looking at kd-trees)
-    - Allow for multiple primitives in 1 node (overlapping objects)
+    - Better pairing choices when building BVH Tree
     - Split up larger meshes into smaller triangle groups
-    - Setup BVH for all primitives regardless of type
- - Blended Normals                                  \(Not Started\)
+ - Blended Normals                                  \(Work In Progress\)
+    - Fix strange blending on sharp corners
  - Depth of field                                   \(Not Started\)
  - Liquids and transparency                         \(Not Started\)
  - Smoke and Heat Distortion                        \(Not Started\)
 
 ## Known Issues
- - Bounding Volume Heirarchy does not account for objects with overlapping bounds and sometimes leaves out objects due to poor splitting. (Will print warning message)
+ - Bounding Volume Heirarchy does not always choose best splitting \(O\(n!\) problem\)
+ - BVH Building sometimes leaves out Mesh Objects.
+ - Normal blending glitches on low-poly objects with sharp corners
 
 ## Sources/Guides:
  - Basic Setup: [Ray Tracing Blog](http://blog.three-eyed-games.com/2018/05/03/gpu-ray-tracing-in-unity-part-1/)
- - Bounding Volumes: \(WIP\)
+ - Normal Blending: [Lesson on Barycentric Coordinates](https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/barycentric-coordinates.html)
