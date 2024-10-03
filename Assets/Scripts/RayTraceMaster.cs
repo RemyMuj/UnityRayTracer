@@ -424,7 +424,7 @@ public class RayTraceMaster : MonoBehaviour {
                 leaf.vmax = new Vector3(Mathf.Max(leaf.vmax.x, test.x), Mathf.Max(leaf.vmax.y, test.y), Mathf.Max(leaf.vmax.z, test.z));
             }
 
-            // Add leaf to small list for level
+            // Add leaf
             leaves.Add(leaf);
         }
 
@@ -447,7 +447,7 @@ public class RayTraceMaster : MonoBehaviour {
                 index = _spheres.FindIndex(x => x == sphere)
             };
 
-            // Add leaf to small list for level
+            // Add leaf
             leaves.Add(leaf);
         }
 
@@ -455,14 +455,68 @@ public class RayTraceMaster : MonoBehaviour {
         return leaves;
     }
 
+    /// JoinBVH(): Join two BVH lists to obey index rule for children ///
+    private List<BVHNode> JoinBVH(BVHNode parent, List<BVHNode> left, List<BVHNode> right) {
+        // Setup Variables
+        List<BVHNode> list;
+        int depth = Mathf.CeilToInt(Mathf.Max(Mathf.Log(left.Count, 2), Mathf.Log(right.Count, 2))) + 1;
+        if (depth <= 1) depth = 2; // Fix case where Log(1) = 0 makes depth = 1 instead of 2
+        int startIndex = 0;
+        int subLen = 1;
+
+        // Swap children if left sub tree smaller
+        if (right.Count > left.Count) {
+            list = left;
+            left = right;
+            right = list;
+        }
+
+        // Setup larger list
+        list = new List<BVHNode>();
+        list.Add(parent);
+
+        // Weave in children layer by layer
+        for (int i = 1; i < depth; i++) {
+            // Add left subtree layer (guaranteed to be complete)
+            for (int k = 0; k < subLen; k++) {
+                list.Add(left[startIndex + k]);
+            }
+
+            // Add right subtree layer (might be incomplete, so needs filler nodes)
+            for (int k = 0; k < subLen; k++) {
+                if (right.Count > startIndex + k) {
+                    list.Add(right[startIndex + k]);
+                } else {
+                    list.Add(new BVHNode() {
+                        vmin = new Vector3(0.0f, 0.0f, 0.0f),
+                        vmax = new Vector3(0.0f, 0.0f, 0.0f),
+                        index = -1
+                    });
+                }
+            }
+
+            // Increment for next layer
+            startIndex += subLen;
+            subLen *= 2;
+        }
+
+        // Return
+        return list;
+    }
+
     /// SetupBVHRankList(): Setup node ranking list for each node ///
     /// Ranking List: All other nodes sorted nearest-to-farthest in 2 concatenated lists: first regular nodes then, "forbidden" nodes
     ///  - "Forbidden" node : A node where the vector between it and the chosen node roughly intersects at least one other node. (Disfavored to reduce overlap for node pairings)
-    private List<List<BVHNode>> SetupBVHRankList(List<BVHNode> nodes) {
+    private List<List<BVHNode>> SetupBVHRankList(List<List<BVHNode>> trees) {
         // Setup Variables
         List<List<BVHNode>> rankList = new List<List<BVHNode>>();
         List<(int index, double dis)> ranking = new List<(int index, double dis)>();
         List<BVHNode> curList;
+
+        List<BVHNode> nodes = new List<BVHNode>();
+        foreach (List<BVHNode> tree in trees) {
+            nodes.Add(tree[0]);
+        }
         
         double distance;
         Vector3 test = new Vector3();
@@ -538,30 +592,33 @@ public class RayTraceMaster : MonoBehaviour {
         return rankList;
     }
 
-    /// PairBVHBounds(): Choose ideal pairing of previous layer to make new layer of nodes ///  
-    private List<BVHNode> PairBVHBounds(List<BVHNode> nodes, out List<(int left, int right)> curChildren) {
+    /// PairBVHBounds(): Choose ideal pairing of current subtrees to make new layer of subtrees ///  
+    private void PairBVHBounds(ref List<List<BVHNode>> trees) {
         // Setup Variables
-        List<List<BVHNode>> rankList = SetupBVHRankList(nodes);
+        List<List<BVHNode>> rankList = SetupBVHRankList(trees);
 
-        List<BVHNode> bestPairing = new List<BVHNode>();
+        List<List<BVHNode>> bestPairing = new List<List<BVHNode>>();
         float bestVolume = -1.0f;
-        curChildren = new List<(int left, int right)>();
 
-        List<BVHNode> pairing = new List<BVHNode>();
+        List<List<BVHNode>> pairing = new List<List<BVHNode>>();
         float volume;
-        List<(int left, int right)> tempChildren = new List<(int left, int right)>();
         List<bool> paired = new List<bool>();
+
+        List<BVHNode> nodes = new List<BVHNode>();
+        foreach (List<BVHNode> tree in trees) {
+            nodes.Add(tree[0]);
+        }
 
         int numTests = nodes.Count;
         int index;
         int otherIndex;
+
         BVHNode node;
         
         // Test different pairings
         for (int i = 0; i < numTests; i++) {
             // Setup Variables
             pairing.Clear();
-            tempChildren.Clear();
             paired.Clear();
             for (int n = 0; n < nodes.Count; n++) {paired.Add(false);}
             volume = 0.0f;
@@ -569,7 +626,7 @@ public class RayTraceMaster : MonoBehaviour {
             // Make Candidate pairing
             for (int j = i; j < i + numTests; j++) {
                 // Index for Choosing node
-                index = j % nodes.Count;
+                index = j % trees.Count;
 
                 if (paired[index] == false) {
                     // Choose first other node in rankList that is unpaired
@@ -592,8 +649,7 @@ public class RayTraceMaster : MonoBehaviour {
                             };
 
                             // Add to pairing, children and volume
-                            pairing.Add(node);
-                            tempChildren.Add((index, otherIndex));
+                            pairing.Add(JoinBVH(node, trees[index], trees[otherIndex]));
                             volume += (node.vmax.x - node.vmin.x) * (node.vmax.y - node.vmin.y) * (node.vmax.z - node.vmin.z);
 
                             // Exit for loop
@@ -604,8 +660,7 @@ public class RayTraceMaster : MonoBehaviour {
                     // Pair lone node as self
                     if (!paired[index]) {
                         node = nodes[index];
-                        pairing.Add(node);
-                        tempChildren.Add((index, -1));
+                        pairing.Add(JoinBVH(node, trees[index], new List<BVHNode>()));
                         volume += (node.vmax.x - node.vmin.x) * (node.vmax.y - node.vmin.y) * (node.vmax.z - node.vmin.z);
                     }
                 }
@@ -614,138 +669,56 @@ public class RayTraceMaster : MonoBehaviour {
                 if (volume < bestVolume || bestVolume < 0.0f) {
                     bestPairing = pairing;
                     bestVolume = volume;
-                    curChildren = tempChildren;
                 }
             }
         }
 
-        // Return
-        rayDebug.Log("curChildren: " + string.Join(", ", curChildren), 2);
-        return bestPairing;
-    }
-
-    /// ConvertPairings(): Sort list of BVH layers so children line up for array representation and then copy to array
-    private void ConvertPairings(List<BVHNode> list, List<List<BVHNode>> layers, List<List<(int left, int right)>> children) {
-        // Setup variables
-        int newIndex;
-        int swapIndex;
-        BVHNode swapNode;
-        (int left, int right) swapChild;
-
-        // Sort pairings to line up children
-        for (int i = 0; i < layers.Count; i++) {
-            for (int j = 0; j < layers[i].Count; j++) {
-                // Debug printing
-                rayDebug.Log("Layer " + i + " Length: " + layers[i].Count, 3);
-
-                // Sort layer below to line up children
-                if (i < layers.Count - 1) {
-                    // Sort Left Child
-                    newIndex = 2 * j;
-                    if (j < children[i].Count && children[i][j].left >= 0 && newIndex < layers[i+1].Count) {
-                        // Swapping Node
-                        swapNode = layers[i + 1][newIndex];
-                        layers[i + 1][newIndex] = layers[i + 1][children[i][j].left];
-                        layers[i + 1][children[i][j].left] = swapNode;
-
-                        // Updating Children Index Info
-                        swapIndex = children[i].FindIndex(x => x.right == newIndex);
-                        if (swapIndex != -1) children[i][swapIndex] = (children[i][swapIndex].left, children[i][j].left);
-                        swapIndex = children[i].FindIndex(x => x.left == newIndex);
-                        if (swapIndex != -1) children[i][swapIndex] = (children[i][j].left, children[i][swapIndex].right);
-
-                        // Swapping Children Info
-                        if (i + 1 < children.Count && newIndex < children[i + 1].Count) {
-                            swapChild = children[i + 1][newIndex];
-                            children[i + 1][newIndex] = children[i + 1][children[i][j].left];
-                            children[i + 1][children[i][j].left] = swapChild;
-                        }
-                    }
-
-                    // Sort right Child
-                    newIndex = 2 * j + 1;
-                    if (j < children[i].Count && children[i][j].right >= 0 && newIndex < layers[i+1].Count) {
-                        // Swapping Node
-                        swapNode = layers[i + 1][newIndex];
-                        layers[i + 1][newIndex] = layers[i + 1][children[i][j].right];
-                        layers[i + 1][children[i][j].right] = swapNode;
-
-                        // Updating Children Index Info
-                        swapIndex = children[i].FindIndex(x => x.right == newIndex);
-                        if (swapIndex != -1) children[i][swapIndex] = (children[i][swapIndex].left, children[i][j].right);
-                        swapIndex = children[i].FindIndex(x => x.left == newIndex);
-                        if (swapIndex != -1) children[i][swapIndex] = (children[i][j].right, children[i][swapIndex].right);
-
-                        // Swapping Children Info
-                        if (i + 1 < children.Count && newIndex < children[i + 1].Count) {
-                            swapChild = children[i + 1][newIndex];
-                            children[i + 1][newIndex] = children[i + 1][children[i][j].right];
-                            children[i + 1][children[i][j].right] = swapChild;
-                        }
-                    }
-                }
-
-                // Add self to BVH List (already sorted)
-                list.Add(layers[i][j]);
-            }
-        }
+        // Replace trees
+        trees = bestPairing;
     }
 
     /// CreateBVH(): Create MeshObject BVH Tree ///
     private void CreateBVH(List<MeshObject> meshes) {
         // Set up BVH list representation
-        MeshDepth = Mathf.CeilToInt(Mathf.Log(meshes.Count)) + 1;
+        MeshDepth = Mathf.CeilToInt(Mathf.Log(meshes.Count, 2)) + 1;
 
-        // Start at leaf layer
-        List<List<BVHNode>> layers = new List<List<BVHNode>>();
-        List<List<(int left, int right)>> children = new List<List<(int left, int right)>>();
-
-        List<BVHNode> curLayer = SetupBVHLeaves(meshes);
-        List<(int left, int right)> curChildren = new List<(int left, int right)>();
-
-        layers.Add(curLayer);
+        // Setup leaf layer
+        List<BVHNode> leaves = SetupBVHLeaves(meshes);
+        List<List<BVHNode>> trees = new List<List<BVHNode>>();
+        for (int i = 0; i < leaves.Count; i++) {
+            trees.Add(new List<BVHNode>());
+            trees[i].Add(leaves[i]);
+        }
 
         // Make pairings until at root BVHNode
         for (int i = 0; i < MeshDepth - 1; i++) {
-            curChildren.Clear();
-            curLayer = PairBVHBounds(curLayer, out curChildren);
-
-            layers.Insert(0, curLayer);
-            children.Insert(0, curChildren);
+            PairBVHBounds(ref trees);
         }
         
-        // Convert to array
-        ConvertPairings(MeshBVH, layers, children);
+        // Set as official Mesh BVH
+        MeshBVH = trees[0];
     }
 
     /// CreateBVH(): Create Sphere BVH Tree ///
     private void CreateBVH(List<Sphere> spheres) {
         // Set up BVH list representation
-        SphereDepth = Mathf.CeilToInt(Mathf.Log(spheres.Count)) + 1;
+        SphereDepth = Mathf.CeilToInt(Mathf.Log(spheres.Count, 2)) + 1;
 
-        // Start at leaf layer
-        List<List<BVHNode>> layers = new List<List<BVHNode>>();
-        List<List<(int left, int right)>> children = new List<List<(int left, int right)>>();
-
-        List<BVHNode> curLayer = SetupBVHLeaves(spheres);
-        List<(int left, int right)> curChildren;
-
-        layers.Add(curLayer);
+        // Setup leaf layer
+        List<BVHNode> leaves = SetupBVHLeaves(spheres);
+        List<List<BVHNode>> trees = new List<List<BVHNode>>();
+        for (int i = 0; i < leaves.Count; i++) {
+            trees.Add(new List<BVHNode>());
+            trees[i].Add(leaves[i]);
+        }
 
         // Make pairings until at root BVHNode
         for (int i = 0; i < SphereDepth - 1; i++) {
-            curChildren = new List<(int left, int right)>();
-            curLayer = PairBVHBounds(curLayer, out curChildren);
-
-            layers.Insert(0, curLayer);
-            children.Insert(0, curChildren);
+            PairBVHBounds(ref trees);
         }
         
-        // Convert to array
-        for (int i = 0; i < SphereDepth - 1; i++) {
-            rayDebug.Log("Children[" + i + "]: " + string.Join(", ", children[i]), 2);
-        }
-        ConvertPairings(SphereBVH, layers, children);
+        // Set as official Sphere BVH
+        SphereBVH = trees[0];
     }
 
     /// RebuildTrees(): Rebuild Bounding Volume Tree for Ray Trace Objects ///
@@ -758,8 +731,8 @@ public class RayTraceMaster : MonoBehaviour {
         int MeshLength = (int) Mathf.Round(Mathf.Pow(2.0f, (float) MeshDepth)) - 1;
         int SphereLength = (int) Mathf.Round(Mathf.Pow(2.0f, (float) SphereDepth)) - 1;
 
-        rayDebug.Log("[MESH OBJECTS] \n > Depth: " + MeshDepth + "\n > Complete Length: " + MeshLength + "\n > Real Length: " + MeshBVH.Count, 2);
-        rayDebug.Log("[SPHERES] \n > Depth: " + SphereDepth + "\n > Complete Length: " + SphereLength + "\n > Real Length: " + SphereBVH.Count, 2);
+        rayDebug.Log("[MESH OBJECTS] \n > Amount: " + _meshObjects.Count + "\n > Depth: " + MeshDepth + "\n > Complete Length: " + MeshLength + "\n > Real Length: " + MeshBVH.Count, 2);
+        rayDebug.Log("[SPHERES] \n > Amount: " + _spheres.Count + "\n > Depth: " + SphereDepth + "\n > Complete Length: " + SphereLength + "\n > Real Length: " + SphereBVH.Count, 2);
 
         // Update Compute buffers
         CreateComputeBuffer(ref _meshObjectBuffer, _meshObjects, MeshObjectStructSize);
