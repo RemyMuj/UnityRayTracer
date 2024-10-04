@@ -418,7 +418,7 @@ public class RayTraceMaster : MonoBehaviour {
             };
 
             // Refine bounds
-            for (int i = mesh.indices_offset + 1; i < mesh.indices_count; i++) {
+            for (int i = mesh.indices_offset + 1; i < mesh.indices_offset + mesh.indices_count; i++) {
                 test = mesh.localToWorldMatrix.MultiplyPoint3x4(_vertices[_indices[i]]);
                 leaf.vmin = new Vector3(Mathf.Min(leaf.vmin.x, test.x), Mathf.Min(leaf.vmin.y, test.y), Mathf.Min(leaf.vmin.z, test.z));
                 leaf.vmax = new Vector3(Mathf.Max(leaf.vmax.x, test.x), Mathf.Max(leaf.vmax.y, test.y), Mathf.Max(leaf.vmax.z, test.z));
